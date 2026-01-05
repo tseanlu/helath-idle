@@ -14,6 +14,11 @@ const state = {
   shoesBasePrice: 20,
   shoesGrowth: 1.35,
 
+  autoUnlocked: false,
+  autoPrice: 60,          // 解鎖價格（習慣點數）
+  autoInterval: 5,        // 每幾秒嘗試一次自動運動
+  autoTimer: 0,           // 計時器（不用動）
+
   lastSeen: Date.now()
 };
 
@@ -75,7 +80,12 @@ const el = {
   modeName: document.getElementById("modeName"),
   modeBalancedBtn: document.getElementById("modeBalancedBtn"),
   modeRecoveryBtn: document.getElementById("modeRecoveryBtn"),
-  modeSprintBtn: document.getElementById("modeSprintBtn")
+  modeSprintBtn: document.getElementById("modeSprintBtn"),
+
+  autoStatus: document.getElementById("autoStatus"),
+  buyAutoBtn: document.getElementById("buyAutoBtn"),
+  autoPrice: document.getElementById("autoPrice"),
+
 };
 
 // ===== 存檔 =====
@@ -99,6 +109,18 @@ function offlineProgress() {
 
   state.energy += energyRegen() * sec;
   state.points += pointsPerSec() * sec;
+
+  if (state.autoUnlocked) {
+    const workouts = Math.min(
+      Math.floor(sec / state.autoInterval),
+      Math.floor(state.energy / state.workoutCost),
+      2000 // 安全上限，避免極端狀況卡死
+    );
+    state.energy -= workouts * state.workoutCost;
+
+    // 簡化：用當下的 workoutGain 估算（足夠 MVP）
+    state.health += workouts * workoutGain();
+  }
 
   clamp();
 }
@@ -141,6 +163,33 @@ function buyShoes() {
   save();
 }
 
+function buyAuto() {
+  if (state.autoUnlocked) {
+    el.hint.textContent = "已經解鎖自動運動了。";
+    return;
+  }
+  if (state.points < state.autoPrice) {
+    el.hint.textContent = "點數不夠，先累積一下。";
+    return;
+  }
+  state.points -= state.autoPrice;
+  state.autoUnlocked = true;
+  el.hint.textContent = "✅ 解鎖成功！自動運動已啟用。";
+  save();
+  render();
+}
+
+// 自動運動：不顯示提示、不一直刷 hint（避免吵）
+function autoWorkoutStep() {
+  if (!state.autoUnlocked) return;
+  if (state.energy < state.workoutCost) return;
+
+  state.energy -= state.workoutCost;
+  state.health += workoutGain();
+  clamp();
+}
+
+
 // ===== UI =====
 function render() {
   el.points.textContent = Math.floor(state.points);
@@ -154,6 +203,11 @@ function render() {
   el.workoutBtn.disabled = state.energy < state.workoutCost;
   el.buyShoesBtn.disabled = state.points < shoesPrice();
   el.modeName.textContent = modeMultipliers().name;
+
+  el.autoStatus.textContent = state.autoUnlocked ? "已解鎖" : "未解鎖";
+  el.autoPrice.textContent = `（${state.autoPrice} 點）`;
+  el.buyAutoBtn.disabled = state.autoUnlocked || state.points < state.autoPrice;
+
 }
 
 // ===== 主循環 =====
@@ -164,6 +218,16 @@ function tick(now) {
 
   state.energy += energyRegen() * dt;
   state.points += pointsPerSec() * dt;
+
+  // 自動運動計時
+  if (state.autoUnlocked) {
+    state.autoTimer += dt;
+    while (state.autoTimer >= state.autoInterval) {
+      state.autoTimer -= state.autoInterval;
+      autoWorkoutStep();
+    }
+  }
+
 
   clamp();
   render();
@@ -178,6 +242,7 @@ render();
 el.restBtn.onclick = rest;
 el.workoutBtn.onclick = workout;
 el.buyShoesBtn.onclick = buyShoes;
+el.buyAutoBtn.onclick = buyAuto;
 
 el.modeBalancedBtn.onclick = () => { state.mode = "balanced"; el.hint.textContent = "切換：平衡派"; save(); render(); };
 el.modeRecoveryBtn.onclick = () => { state.mode = "recovery"; el.hint.textContent = "切換：恢復派"; save(); render(); };
