@@ -5,6 +5,7 @@ const state = {
   energy: 50,
   energyMax: 100,
   health: 0,
+  mode: "balanced", // balanced | recovery | sprint
 
   workoutCost: 10,
   restGain: 10,
@@ -22,11 +23,19 @@ function efficiency() {
 }
 
 function energyRegen() {
-  return 0.8 + state.health * 0.01;
+  const m = modeMultipliers();
+  return (0.8 + state.health * 0.01) * m.regen;
 }
 
+
 function pointsPerSec() {
-  return 0.05 + state.health * 0.002;
+  const m = modeMultipliers();
+  return (0.05 + state.health * 0.002) * m.points;
+}
+
+function workoutGain() {
+  const m = modeMultipliers();
+  return ((1 + state.shoesLevel * 0.2) * efficiency()) * m.workout;
 }
 
 function shoesPrice() {
@@ -35,8 +44,17 @@ function shoesPrice() {
   );
 }
 
-function workoutGain() {
-  return (1 + state.shoesLevel * 0.2) * efficiency();
+
+function modeMultipliers() {
+  // 你可以把這當成「生活節奏」
+  switch (state.mode) {
+    case "recovery":
+      return { regen: 1.25, workout: 0.85, points: 1.15, name: "恢復派" };
+    case "sprint":
+      return { regen: 0.85, workout: 1.25, points: 0.95, name: "衝刺派" };
+    default:
+      return { regen: 1.0, workout: 1.0, points: 1.0, name: "平衡派" };
+  }
 }
 
 // ===== DOM =====
@@ -52,7 +70,12 @@ const el = {
   restBtn: document.getElementById("restBtn"),
   workoutBtn: document.getElementById("workoutBtn"),
   buyShoesBtn: document.getElementById("buyShoesBtn"),
-  shoesPrice: document.getElementById("shoesPrice")
+  shoesPrice: document.getElementById("shoesPrice"),
+
+  modeName: document.getElementById("modeName"),
+  modeBalancedBtn: document.getElementById("modeBalancedBtn"),
+  modeRecoveryBtn: document.getElementById("modeRecoveryBtn"),
+  modeSprintBtn: document.getElementById("modeSprintBtn")
 };
 
 // ===== 存檔 =====
@@ -130,6 +153,7 @@ function render() {
 
   el.workoutBtn.disabled = state.energy < state.workoutCost;
   el.buyShoesBtn.disabled = state.points < shoesPrice();
+  el.modeName.textContent = modeMultipliers().name;
 }
 
 // ===== 主循環 =====
@@ -154,6 +178,10 @@ render();
 el.restBtn.onclick = rest;
 el.workoutBtn.onclick = workout;
 el.buyShoesBtn.onclick = buyShoes;
+
+el.modeBalancedBtn.onclick = () => { state.mode = "balanced"; el.hint.textContent = "切換：平衡派"; save(); render(); };
+el.modeRecoveryBtn.onclick = () => { state.mode = "recovery"; el.hint.textContent = "切換：恢復派"; save(); render(); };
+el.modeSprintBtn.onclick = () => { state.mode = "sprint"; el.hint.textContent = "切換：衝刺派"; save(); render(); };
 
 setInterval(save, 10000);
 window.addEventListener("beforeunload", save);
