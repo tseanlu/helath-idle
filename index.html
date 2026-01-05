@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>健康 Idle MVP</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <h1>健康 Idle（MVP）</h1>
+
+    <section class="card">
+      <div class="row">
+        <div>🪙 習慣點數：<b id="points">0</b></div>
+        <div>⚡ 體力：<b id="energy">0</b> / <span id="energyMax">100</span></div>
+      </div>
+      <div class="row">
+        <div>💚 健康值：<b id="health">0</b></div>
+        <div>📈 效率：<b id="eff">1.00</b>x</div>
+      </div>
+      <div class="row">
+        <div>⏱️ 體力恢復：<b id="regen">0</b>/秒</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>行動</h2>
+      <div class="buttons">
+        <button id="restBtn">🛌 休息（+10 體力）</button>
+        <button id="workoutBtn">🏃 運動（-10 體力）</button>
+      </div>
+      <p class="hint" id="hint"></p>
+    </section>
+
+    <section class="card">
+      <h2>升級</h2>
+      <button id="buyShoesBtn">
+        👟 跑鞋（運動收益 +0.2）
+        <span id="shoesPrice"></span>
+      </button>
+    </section>
+
+    <footer class="footer">
+      <small>提示：健康值會讓所有成長變快，這是一個長期遊戲。</small>
+    </footer>
+  </main>
+
+  <script src="game.js"></script>
+</body>
+</html>
