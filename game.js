@@ -19,6 +19,8 @@ const state = {
     modeBoostUnlocked: false // 健康 40
   },
 
+  prestigeLevel: 0,
+
   autoUnlocked: false,
   autoPrice: 60,          // 解鎖價格（習慣點數）
   autoInterval: 5,        // 每幾秒嘗試一次自動運動
@@ -34,13 +36,15 @@ function efficiency() {
 
 function energyRegen() {
   const m = modeMultipliers();
-  return (0.8 + state.health * 0.01) * m.regen;
+  const p = prestigeMultipliers();
+  return (0.8 + state.health * 0.01) * m.regen * p.regen;
 }
 
 
 function pointsPerSec() {
   const m = modeMultipliers();
-  return (0.05 + state.health * 0.002) * m.points;
+  const p = prestigeMultipliers();
+  return (0.05 + state.health * 0.002) * m.points * p.points;
 }
 
 function workoutGain() {
@@ -113,6 +117,45 @@ function modeMultipliers() {
   }
 }
 
+function prestigeMultipliers() {
+  return {
+    points: 1 + 0.10 * state.prestigeLevel, // 每級 +10%
+    regen:  1 + 0.05 * state.prestigeLevel  // 每級 +5%
+  };
+}
+
+function canPrestige() {
+  return state.health >= 60;
+}
+
+function doPrestige() {
+  if (!canPrestige()) {
+    el.prestigeHint.textContent = "健康未達 60，還不能進行 Prestige。";
+    return;
+  }
+
+  state.prestigeLevel += 1;
+
+  // 重置主要進度
+  state.points = 0;
+  state.health = 0;
+  state.energy = 50;
+  state.shoesLevel = 0;
+
+  // 保留：自動運動（如果你之前已經解鎖過）
+  // 如果你是用「健康≥20」解鎖 auto，這行保險讓它不要被重置掉
+  if (state.milestones?.autoUnlocked) {
+    state.autoUnlocked = true;
+  }
+
+  // 重置一些計時器，避免剛 Prestige 完瞬間觸發一堆自動
+  if (typeof state.autoTimer === "number") state.autoTimer = 0;
+
+  clamp();
+  el.prestigeHint.textContent = `🌟 Prestige 成功！等級提升到 ${state.prestigeLevel}。`;
+  save();
+  render();
+}
 
 // ===== DOM =====
 const el = {
@@ -141,6 +184,12 @@ const el = {
   msTitle: document.getElementById("msTitle"),
   msBar: document.getElementById("msBar"),
   msProgressText: document.getElementById("msProgressText"),
+
+  prestigeLevel: document.getElementById("prestigeLevel"),
+  prestigeBonus: document.getElementById("prestigeBonus"),
+  prestigeBtn: document.getElementById("prestigeBtn"),
+  prestigeHint: document.getElementById("prestigeHint")
+
 };
 
 // ===== 存檔 =====
@@ -277,6 +326,18 @@ function render() {
     el.msProgressText.textContent = `${cur} / ${ms.target}`;
   }
 
+  // ===== Prestige UI =====
+  const p = prestigeMultipliers();
+  el.prestigeLevel.textContent = state.prestigeLevel;
+  el.prestigeBonus.textContent = `點數 x${p.points.toFixed(2)}、回復 x${p.regen.toFixed(2)}`;
+
+  el.prestigeBtn.disabled = !canPrestige();
+  if (canPrestige()) {
+    el.prestigeHint.textContent = "✅ 你已達成條件，可以進行 Prestige。";
+  } else {
+    el.prestigeHint.textContent = `需要健康 ≥ 60（目前 ${Math.floor(state.health)}）`;
+  }
+
 }
 
 // ===== 主循環 =====
@@ -311,6 +372,7 @@ render();
 
 el.restBtn.onclick = rest;
 el.workoutBtn.onclick = workout;
+el.prestigeBtn.onclick = doPrestige;
 el.buyShoesBtn.onclick = buyShoes;
 el.buyAutoBtn.onclick = buyAuto;
 
