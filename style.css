@@ -82,3 +82,22 @@ button:hover {
   width: auto;
   flex: 1 1 160px;
 }
+.milestone-line {
+  margin-top: 6px;
+  opacity: 0.9;
+}
+
+.progress-wrap {
+  margin-top: 10px;
+  height: 12px;
+  background: #0f1822;
+  border: 1px solid #26384d;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: #2a8f5a; /* 只用一種顏色就好看 */
+}

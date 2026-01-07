@@ -71,6 +71,20 @@ function checkMilestones() {
   }
 }
 
+function nextMilestone() {
+  // 你目前的里程碑：20 自動運動、40 模式強化、60 Prestige 預告
+  if (!state.milestones.autoUnlocked) {
+    return { target: 20, title: "健康 ≥ 20：解鎖自動運動" };
+  }
+  if (!state.milestones.modeBoostUnlocked) {
+    return { target: 40, title: "健康 ≥ 40：強化生活型態" };
+  }
+  if (state.health < 60) {
+    return { target: 60, title: "健康 ≥ 60：解鎖『人生重來』資格（預告）" };
+  }
+  return { target: null, title: "✅ 目前里程碑已完成（下一步：實裝 Prestige）" };
+}
+
 function modeMultipliers() {
   const boosted = state.milestones.modeBoostUnlocked ? 1.1 : 1.0;
 
@@ -124,6 +138,9 @@ const el = {
   buyAutoBtn: document.getElementById("buyAutoBtn"),
   autoPrice: document.getElementById("autoPrice"),
 
+  msTitle: document.getElementById("msTitle"),
+  msBar: document.getElementById("msBar"),
+  msProgressText: document.getElementById("msProgressText"),
 };
 
 // ===== 存檔 =====
@@ -245,6 +262,20 @@ function render() {
   el.autoStatus.textContent = state.autoUnlocked ? "已解鎖" : "未解鎖";
   el.autoPrice.textContent = `（${state.autoPrice} 點）`;
   el.buyAutoBtn.disabled = state.autoUnlocked || state.points < state.autoPrice;
+
+  // ===== 里程碑 UI =====
+  const ms = nextMilestone();
+  el.msTitle.textContent = ms.title;
+
+  if (ms.target === null) {
+    el.msProgressText.textContent = "—";
+    el.msBar.style.width = "100%";
+  } else {
+    const cur = Math.max(0, Math.floor(state.health));
+    const pct = Math.max(0, Math.min(100, (cur / ms.target) * 100));
+    el.msBar.style.width = pct.toFixed(1) + "%";
+    el.msProgressText.textContent = `${cur} / ${ms.target}`;
+  }
 
 }
 
