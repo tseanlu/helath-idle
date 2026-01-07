@@ -14,6 +14,11 @@ const state = {
   shoesBasePrice: 20,
   shoesGrowth: 1.35,
 
+  milestones: {
+    autoUnlocked: false,   // 健康 20
+    modeBoostUnlocked: false // 健康 40
+  },
+
   autoUnlocked: false,
   autoPrice: 60,          // 解鎖價格（習慣點數）
   autoInterval: 5,        // 每幾秒嘗試一次自動運動
@@ -49,18 +54,51 @@ function shoesPrice() {
   );
 }
 
+function checkMilestones() {
+  // Milestone 1：健康 ≥ 20 → 自動運動
+  if (!state.milestones.autoUnlocked && state.health >= 20) {
+    state.milestones.autoUnlocked = true;
+    state.autoUnlocked = true; // 直接啟用你原本的自動運動系統
+    el.hint.textContent = "🎉 里程碑達成！你已經養成習慣，自動運動已解鎖。";
+    save();
+  }
 
-function modeMultipliers() {
-  // 你可以把這當成「生活節奏」
-  switch (state.mode) {
-    case "recovery":
-      return { regen: 1.25, workout: 0.85, points: 1.15, name: "恢復派" };
-    case "sprint":
-      return { regen: 0.85, workout: 1.25, points: 0.95, name: "衝刺派" };
-    default:
-      return { regen: 1.0, workout: 1.0, points: 1.0, name: "平衡派" };
+  // Milestone 2：健康 ≥ 40 → 生活型態強化
+  if (!state.milestones.modeBoostUnlocked && state.health >= 40) {
+    state.milestones.modeBoostUnlocked = true;
+    el.hint.textContent = "💪 里程碑達成！你的生活型態獲得強化。";
+    save();
   }
 }
+
+function modeMultipliers() {
+  const boosted = state.milestones.modeBoostUnlocked ? 1.1 : 1.0;
+
+  switch (state.mode) {
+    case "recovery":
+      return {
+        regen: 1.25 * boosted,
+        workout: 0.85,
+        points: 1.15,
+        name: "恢復派"
+      };
+    case "sprint":
+      return {
+        regen: 0.85,
+        workout: 1.25 * boosted,
+        points: 0.95,
+        name: "衝刺派"
+      };
+    default:
+      return {
+        regen: 1.0,
+        workout: 1.0,
+        points: 1.0 * boosted,
+        name: "平衡派"
+      };
+  }
+}
+
 
 // ===== DOM =====
 const el = {
@@ -219,6 +257,8 @@ function tick(now) {
   state.energy += energyRegen() * dt;
   state.points += pointsPerSec() * dt;
 
+  checkMilestones();
+
   // 自動運動計時
   if (state.autoUnlocked) {
     state.autoTimer += dt;
@@ -227,7 +267,6 @@ function tick(now) {
       autoWorkoutStep();
     }
   }
-
 
   clamp();
   render();
