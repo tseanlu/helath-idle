@@ -18,6 +18,28 @@
         <div class="pillValue"><span id="points">0</span></div>
       </div>
     </header>
+    <section class="card">
+      <div class="card-title">跑道</div>
+
+      <div class="row between">
+        <div>
+          <div class="muted micro">本圈進度</div>
+          <div class="strong"><span id="lapMiles">0.00</span> / <span id="lapTarget">1.00</span> mile</div>
+        </div>
+        <div>
+          <div class="muted micro">總里程</div>
+          <div class="strong"><span id="totalMiles">0.0</span> miles</div>
+        </div>
+      </div>
+
+      <div class="progress-wrap" style="margin-top:10px;">
+        <div id="lapBar" class="progress-bar"></div>
+      </div>
+
+      <div class="micro muted" style="margin-top:8px;">
+        下一個解鎖：<b id="nextUnlockText">—</b>
+      </div>
+    </section>
 
     <section class="grid">
       <!-- 左欄：狀態 -->

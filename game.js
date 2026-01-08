@@ -25,6 +25,13 @@ const state = {
   autoInterval: 5,
   autoTimer: 0,
 
+  // ===== Track (Miles) =====
+  totalMiles: 0,
+  lapMiles: 0,
+  lapTarget: 1.0,        // 每圈 1 mile
+  milesPerSecBase: 0.008, // 速度（mile/sec）先保守：0.48 mile/min
+  trackLevel: 0,
+
   // planner (advance feature)
   plannerUnlocked: false,
   plannerPrice: 80,
@@ -177,6 +184,20 @@ function pointsPerSec() {
   return (0.05 + state.health * 0.002) * m.points * p.points * b.points;
 }
 
+function milesPerSec() {
+  // 鞋等級小加成 + 健康小加成（可選）
+  const shoe = 1 + state.shoesLevel * 0.03;
+  const health = 1 + state.health * 0.001;
+  return state.milesPerSecBase * shoe * health;
+}
+
+function milesPerSec() {
+  // 鞋等級小加成 + 健康小加成（可選）
+  const shoe = 1 + state.shoesLevel * 0.03;
+  const health = 1 + state.health * 0.001;
+  return state.milesPerSecBase * shoe * health;
+}
+
 function workoutGain() {
   const m = modeMultipliers();
   const b = buffMultipliers();
@@ -224,6 +245,12 @@ const el = {
   nextEventName: document.getElementById("nextEventName"),
   nextEventCountdown: document.getElementById("nextEventCountdown"),
   nextEventPlan: document.getElementById("nextEventPlan"),
+
+  lapMiles: document.getElementById("lapMiles"),
+  lapTarget: document.getElementById("lapTarget"),
+  totalMiles: document.getElementById("totalMiles"),
+  lapBar: document.getElementById("lapBar"),
+  nextUnlockText: document.getElementById("nextUnlockText"),
 
   eventPanel: document.getElementById("eventPanel"),
   eventTitle: document.getElementById("eventTitle"),
@@ -470,6 +497,60 @@ function skipEvent() {
   render();
 }
 
+// ===== Track Unlocks =====
+const TRACK_UNLOCKS = [
+  { miles: 1,  text: "解鎖：事件系統（或事件更頻繁）", apply: () => {} },
+  { miles: 5,  text: "解鎖：跑鞋升級（若已存在就當里程碑）", apply: () => {} },
+  { miles: 10, text: "解鎖：事件預告", apply: () => { state.eventPeekUnlocked = true; } },
+  { miles: 20, text: "解鎖：跑步速度 +10%", apply: () => { state.milesPerSecBase *= 1.10; } },
+  { miles: 50, text: "解鎖：Prestige 門檻降低/永久加成（先留空）", apply: () => {} }
+];
+
+function milesPerSec() {
+  // 跑鞋與健康給一點小加成（你也可以先全部拿掉）
+  const shoe = 1 + (state.shoesLevel || 0) * 0.03;
+  const health = 1 + (state.health || 0) * 0.001;
+  return state.milesPerSecBase * shoe * health;
+}
+
+function checkTrackUnlocks() {
+  while (
+    state.trackLevel < TRACK_UNLOCKS.length &&
+    state.totalMiles >= TRACK_UNLOCKS[state.trackLevel].miles
+  ) {
+    const u = TRACK_UNLOCKS[state.trackLevel];
+    state.trackLevel += 1;
+    if (typeof u.apply === "function") u.apply();
+    if (el && el.hint) el.hint.textContent = `🔓 里程解鎖！${u.text}`;
+    save?.();
+  }
+}
+
+// 這個是你要在 tick() 呼叫的主函數
+function trackStep(dt) {
+  // 只在「跑步中」累積里程
+  // 如果你沒有 activity 狀態機，就當作永遠在跑步（也可）
+  const isRunning = (state.activity ? state.activity === "running" : true);
+  if (!isRunning) return;
+
+  const dm = milesPerSec() * dt;
+  state.lapMiles += dm;
+  state.totalMiles += dm;
+
+  // 本圈完成：每 1 mile 結算一次（延遲回報爽點）
+  while (state.lapMiles >= state.lapTarget) {
+    state.lapMiles -= state.lapTarget;
+
+    // 這裡是你「每圈結算」的獎勵，先給點數/錢都行
+    // 如果你後面把 points 改成 money，這行也改即可
+    state.points += 10;
+
+    if (el && el.hint) el.hint.textContent = `🏁 完成 1 圈！獲得獎勵 +10`;
+  }
+
+  checkTrackUnlocks();
+}
+
 /** ===== Planner：提前預覽與預先決策 ===== */
 function setPlannedDecision(decision) {
   // decision for the next event (before it happens)
@@ -583,6 +664,20 @@ function render() {
   } else {
     hideEventPanel();
   }
+  
+  if (el.lapMiles && el.lapTarget && el.totalMiles && el.lapBar && el.nextUnlockText) {
+    el.lapMiles.textContent = state.lapMiles.toFixed(2);
+    el.lapTarget.textContent = state.lapTarget.toFixed(2);
+    el.totalMiles.textContent = state.totalMiles.toFixed(1);
+
+    const pct = Math.max(0, Math.min(100, (state.lapMiles / state.lapTarget) * 100));
+    el.lapBar.style.width = pct.toFixed(1) + "%";
+
+    const next = TRACK_UNLOCKS[state.trackLevel];
+    el.nextUnlockText.textContent = next
+      ? `${next.miles} miles：${next.text}`
+      : "已完成所有跑道解鎖 ✅";
+  }
 
   // timeline
   renderTimeline(now);
@@ -624,7 +719,7 @@ function tick(now) {
       if (decision === "skip") skipEvent();
     }
   }
-
+  trackStep(dt);  
   clamp();
   render();
   requestAnimationFrame(tick);
