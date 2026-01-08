@@ -1,35 +1,164 @@
-const SAVE_KEY = "health_idle_mvp_v1";
+const SAVE_KEY = "health_idle_mvp_v2_events";
 
+/** ===== 狀態 ===== */
 const state = {
+  // account
   points: 0,
+  prestigeLevel: 0,
+
+  // character (固定一個人)
   energy: 50,
   energyMax: 100,
   health: 0,
   mode: "balanced", // balanced | recovery | sprint
+  shoesLevel: 0,
 
   workoutCost: 10,
   restGain: 10,
 
-  shoesLevel: 0,
   shoesBasePrice: 20,
   shoesGrowth: 1.35,
 
-  milestones: {
-    autoUnlocked: false,   // 健康 20
-    modeBoostUnlocked: false // 健康 40
-  },
-
-  prestigeLevel: 0,
-
+  // automation
   autoUnlocked: false,
-  autoPrice: 60,          // 解鎖價格（習慣點數）
-  autoInterval: 5,        // 每幾秒嘗試一次自動運動
-  autoTimer: 0,           // 計時器（不用動）
+  autoPrice: 60,
+  autoInterval: 5,
+  autoTimer: 0,
+
+  // planner (advance feature)
+  plannerUnlocked: false,
+  plannerPrice: 80,
+  plannedDecision: "none", // none | accept | skip  (for next event)
+
+  // events
+  eventActive: null,   // { id, name, type, desc, apply() }
+  nextEventAt: Date.now() + 60_000,
+  nextEventId: null,
 
   lastSeen: Date.now()
 };
 
-// ===== 計算公式 =====
+/** ===== 事件池（先做少量就很好玩） ===== */
+const EVENTS = [
+  {
+    id: "good_sleep",
+    name: "睡得很好",
+    type: "🟢 好狀態",
+    desc: "短時間精神很好：回復更快、點數也更穩。",
+    durationSec: 180,
+    apply() {
+      addTimedBuff({
+        id: "good_sleep",
+        name: "睡得很好",
+        regenMul: 1.35,
+        pointsMul: 1.20,
+        workoutMul: 0.95,
+        durationSec: 180
+      });
+    }
+  },
+  {
+    id: "overtime",
+    name: "臨時加班",
+    type: "🟡 代價事件",
+    desc: "點數變多，但更耗體力（運動更累）。",
+    durationSec: 180,
+    apply() {
+      addTimedBuff({
+        id: "overtime",
+        name: "臨時加班",
+        regenMul: 0.95,
+        pointsMul: 1.60,
+        workoutMul: 0.90,
+        extraWorkoutCost: 5,
+        durationSec: 180
+      });
+    }
+  },
+  {
+    id: "burn_mode",
+    name: "燃燒挑戰",
+    type: "🔴 賭一把",
+    desc: "3 分鐘內：運動收益大幅提高，但每次運動更耗體力。適合衝里程碑。",
+    durationSec: 180,
+    apply() {
+      addTimedBuff({
+        id: "burn_mode",
+        name: "燃燒挑戰",
+        regenMul: 0.85,
+        pointsMul: 0.95,
+        workoutMul: 1.90,
+        extraWorkoutCost: 5,
+        durationSec: 180
+      });
+    }
+  },
+  {
+    id: "low_mood",
+    name: "低潮來襲",
+    type: "🔵 逆風事件",
+    desc: "短時間整體變慢，但如果你願意撐過去，反而更有成就感（小補償）。",
+    durationSec: 180,
+    apply() {
+      addTimedBuff({
+        id: "low_mood",
+        name: "低潮來襲",
+        regenMul: 0.80,
+        pointsMul: 0.85,
+        workoutMul: 0.90,
+        durationSec: 180,
+        onEndBonusPoints: 25
+      });
+    }
+  }
+];
+
+/** ===== timed buff（一次只保留一個，先簡化） ===== */
+let activeBuff = null; // { id, name, regenMul, pointsMul, workoutMul, extraWorkoutCost, endsAt, onEndBonusPoints }
+function addTimedBuff(buff) {
+  const now = Date.now();
+  activeBuff = {
+    id: buff.id,
+    name: buff.name,
+    regenMul: buff.regenMul ?? 1,
+    pointsMul: buff.pointsMul ?? 1,
+    workoutMul: buff.workoutMul ?? 1,
+    extraWorkoutCost: buff.extraWorkoutCost ?? 0,
+    onEndBonusPoints: buff.onEndBonusPoints ?? 0,
+    endsAt: now + (buff.durationSec ?? 180) * 1000
+  };
+  el.hint.textContent = `事件生效：${activeBuff.name}（約 ${(buff.durationSec ?? 180) / 60} 分鐘）`;
+}
+
+/** ===== 計算公式 ===== */
+function prestigeMultipliers() {
+  return {
+    points: 1 + 0.10 * state.prestigeLevel,
+    regen:  1 + 0.05 * state.prestigeLevel
+  };
+}
+
+function modeMultipliers() {
+  switch (state.mode) {
+    case "recovery":
+      return { regen: 1.25, workout: 0.85, points: 1.15, name: "恢復派" };
+    case "sprint":
+      return { regen: 0.85, workout: 1.25, points: 0.95, name: "衝刺派" };
+    default:
+      return { regen: 1.0, workout: 1.0, points: 1.0, name: "平衡派" };
+  }
+}
+
+function buffMultipliers() {
+  if (!activeBuff) return { regen: 1, points: 1, workout: 1, extraWorkoutCost: 0 };
+  return {
+    regen: activeBuff.regenMul ?? 1,
+    points: activeBuff.pointsMul ?? 1,
+    workout: activeBuff.workoutMul ?? 1,
+    extraWorkoutCost: activeBuff.extraWorkoutCost ?? 0
+  };
+}
+
 function efficiency() {
   return 1 + state.health * 0.02;
 }
@@ -37,127 +166,33 @@ function efficiency() {
 function energyRegen() {
   const m = modeMultipliers();
   const p = prestigeMultipliers();
-  return (0.8 + state.health * 0.01) * m.regen * p.regen;
+  const b = buffMultipliers();
+  return (0.8 + state.health * 0.01) * m.regen * p.regen * b.regen;
 }
-
 
 function pointsPerSec() {
   const m = modeMultipliers();
   const p = prestigeMultipliers();
-  return (0.05 + state.health * 0.002) * m.points * p.points;
+  const b = buffMultipliers();
+  return (0.05 + state.health * 0.002) * m.points * p.points * b.points;
 }
 
 function workoutGain() {
   const m = modeMultipliers();
-  return ((1 + state.shoesLevel * 0.2) * efficiency()) * m.workout;
+  const b = buffMultipliers();
+  return ((1 + state.shoesLevel * 0.2) * efficiency()) * m.workout * b.workout;
+}
+
+function currentWorkoutCost() {
+  const b = buffMultipliers();
+  return state.workoutCost + (b.extraWorkoutCost ?? 0);
 }
 
 function shoesPrice() {
-  return Math.floor(
-    state.shoesBasePrice * Math.pow(state.shoesGrowth, state.shoesLevel)
-  );
+  return Math.floor(state.shoesBasePrice * Math.pow(state.shoesGrowth, state.shoesLevel));
 }
 
-function checkMilestones() {
-  // Milestone 1：健康 ≥ 20 → 自動運動
-  if (!state.milestones.autoUnlocked && state.health >= 20) {
-    state.milestones.autoUnlocked = true;
-    state.autoUnlocked = true; // 直接啟用你原本的自動運動系統
-    el.hint.textContent = "🎉 里程碑達成！你已經養成習慣，自動運動已解鎖。";
-    save();
-  }
-
-  // Milestone 2：健康 ≥ 40 → 生活型態強化
-  if (!state.milestones.modeBoostUnlocked && state.health >= 40) {
-    state.milestones.modeBoostUnlocked = true;
-    el.hint.textContent = "💪 里程碑達成！你的生活型態獲得強化。";
-    save();
-  }
-}
-
-function nextMilestone() {
-  // 你目前的里程碑：20 自動運動、40 模式強化、60 Prestige 預告
-  if (!state.milestones.autoUnlocked) {
-    return { target: 20, title: "健康 ≥ 20：解鎖自動運動" };
-  }
-  if (!state.milestones.modeBoostUnlocked) {
-    return { target: 40, title: "健康 ≥ 40：強化生活型態" };
-  }
-  if (state.health < 60) {
-    return { target: 60, title: "健康 ≥ 60：解鎖『人生重來』資格（預告）" };
-  }
-  return { target: null, title: "✅ 目前里程碑已完成（下一步：實裝 Prestige）" };
-}
-
-function modeMultipliers() {
-  const boosted = state.milestones.modeBoostUnlocked ? 1.1 : 1.0;
-
-  switch (state.mode) {
-    case "recovery":
-      return {
-        regen: 1.25 * boosted,
-        workout: 0.85,
-        points: 1.15,
-        name: "恢復派"
-      };
-    case "sprint":
-      return {
-        regen: 0.85,
-        workout: 1.25 * boosted,
-        points: 0.95,
-        name: "衝刺派"
-      };
-    default:
-      return {
-        regen: 1.0,
-        workout: 1.0,
-        points: 1.0 * boosted,
-        name: "平衡派"
-      };
-  }
-}
-
-function prestigeMultipliers() {
-  return {
-    points: 1 + 0.10 * state.prestigeLevel, // 每級 +10%
-    regen:  1 + 0.05 * state.prestigeLevel  // 每級 +5%
-  };
-}
-
-function canPrestige() {
-  return state.health >= 60;
-}
-
-function doPrestige() {
-  if (!canPrestige()) {
-    el.prestigeHint.textContent = "健康未達 60，還不能進行 Prestige。";
-    return;
-  }
-
-  state.prestigeLevel += 1;
-
-  // 重置主要進度
-  state.points = 0;
-  state.health = 0;
-  state.energy = 50;
-  state.shoesLevel = 0;
-
-  // 保留：自動運動（如果你之前已經解鎖過）
-  // 如果你是用「健康≥20」解鎖 auto，這行保險讓它不要被重置掉
-  if (state.milestones?.autoUnlocked) {
-    state.autoUnlocked = true;
-  }
-
-  // 重置一些計時器，避免剛 Prestige 完瞬間觸發一堆自動
-  if (typeof state.autoTimer === "number") state.autoTimer = 0;
-
-  clamp();
-  el.prestigeHint.textContent = `🌟 Prestige 成功！等級提升到 ${state.prestigeLevel}。`;
-  save();
-  render();
-}
-
-// ===== DOM =====
+/** ===== DOM ===== */
 const el = {
   points: document.getElementById("points"),
   energy: document.getElementById("energy"),
@@ -171,6 +206,7 @@ const el = {
   workoutBtn: document.getElementById("workoutBtn"),
   buyShoesBtn: document.getElementById("buyShoesBtn"),
   shoesPrice: document.getElementById("shoesPrice"),
+  shoesLevel: document.getElementById("shoesLevel"),
 
   modeName: document.getElementById("modeName"),
   modeBalancedBtn: document.getElementById("modeBalancedBtn"),
@@ -181,59 +217,88 @@ const el = {
   buyAutoBtn: document.getElementById("buyAutoBtn"),
   autoPrice: document.getElementById("autoPrice"),
 
-  msTitle: document.getElementById("msTitle"),
-  msBar: document.getElementById("msBar"),
-  msProgressText: document.getElementById("msProgressText"),
+  plannerStatus: document.getElementById("plannerStatus"),
+  buyPlannerBtn: document.getElementById("buyPlannerBtn"),
+  plannerPrice: document.getElementById("plannerPrice"),
+
+  nextEventName: document.getElementById("nextEventName"),
+  nextEventCountdown: document.getElementById("nextEventCountdown"),
+  nextEventPlan: document.getElementById("nextEventPlan"),
+
+  eventPanel: document.getElementById("eventPanel"),
+  eventTitle: document.getElementById("eventTitle"),
+  eventType: document.getElementById("eventType"),
+  eventDesc: document.getElementById("eventDesc"),
+  acceptEventBtn: document.getElementById("acceptEventBtn"),
+  skipEventBtn: document.getElementById("skipEventBtn"),
+  eventFinePrint: document.getElementById("eventFinePrint"),
 
   prestigeLevel: document.getElementById("prestigeLevel"),
   prestigeBonus: document.getElementById("prestigeBonus"),
   prestigeBtn: document.getElementById("prestigeBtn"),
   prestigeHint: document.getElementById("prestigeHint")
-
 };
 
-// ===== 存檔 =====
+/** ===== 存檔 ===== */
 function save() {
   localStorage.setItem(SAVE_KEY, JSON.stringify({
     ...state,
-    lastSeen: Date.now()
+    lastSeen: Date.now(),
+    activeBuff
   }));
 }
 
 function load() {
   const raw = localStorage.getItem(SAVE_KEY);
   if (!raw) return;
-  Object.assign(state, JSON.parse(raw));
+  try {
+    const obj = JSON.parse(raw);
+    Object.assign(state, obj);
+    activeBuff = obj.activeBuff ?? null;
+  } catch {
+    // ignore
+  }
 }
 
-// ===== 離線收益 =====
+/** ===== 離線收益 ===== */
 function offlineProgress() {
   const now = Date.now();
   const sec = Math.min((now - state.lastSeen) / 1000, 12 * 3600);
 
+  // energy + points
   state.energy += energyRegen() * sec;
   state.points += pointsPerSec() * sec;
 
+  // offline auto workout (simple)
   if (state.autoUnlocked) {
-    const workouts = Math.min(
-      Math.floor(sec / state.autoInterval),
-      Math.floor(state.energy / state.workoutCost),
-      2000 // 安全上限，避免極端狀況卡死
-    );
-    state.energy -= workouts * state.workoutCost;
+    const possible = Math.floor(sec / state.autoInterval);
+    const energyLimit = Math.floor(state.energy / currentWorkoutCost());
+    const workouts = Math.min(possible, energyLimit, 2000);
 
-    // 簡化：用當下的 workoutGain 估算（足夠 MVP）
-    state.health += workouts * workoutGain();
+    if (workouts > 0) {
+      state.energy -= workouts * currentWorkoutCost();
+      state.health += workouts * workoutGain();
+    }
+  }
+
+  // buff expiration while offline (simple: if expired, grant end bonus once)
+  handleBuffExpiration(now);
+
+  // schedule event if time passed (if user was away)
+  if (!state.eventActive && now >= state.nextEventAt) {
+    spawnNextEvent(now);
   }
 
   clamp();
 }
 
-// ===== 行為 =====
+/** ===== 行為 ===== */
 function clamp() {
   state.energy = Math.max(0, Math.min(state.energy, state.energyMax));
   state.points = Math.max(0, state.points);
   state.health = Math.max(0, state.health);
+  state.shoesLevel = Math.max(0, state.shoesLevel);
+  if (typeof state.prestigeLevel !== "number") state.prestigeLevel = 0;
 }
 
 function rest() {
@@ -241,18 +306,22 @@ function rest() {
   clamp();
   el.hint.textContent = "休息了一下，體力恢復。";
   save();
+  render();
 }
 
 function workout() {
-  if (state.energy < state.workoutCost) {
+  const cost = currentWorkoutCost();
+  if (state.energy < cost) {
     el.hint.textContent = "體力不足，先休息。";
     return;
   }
-  state.energy -= state.workoutCost;
-  state.health += workoutGain();
+  state.energy -= cost;
+  const gain = workoutGain();
+  state.health += gain;
   clamp();
-  el.hint.textContent = `完成運動，健康 +${workoutGain().toFixed(1)}`;
+  el.hint.textContent = `完成運動，健康 +${gain.toFixed(1)}（消耗 ${cost} 體力）`;
   save();
+  render();
 }
 
 function buyShoes() {
@@ -265,11 +334,12 @@ function buyShoes() {
   state.shoesLevel += 1;
   el.hint.textContent = "跑鞋升級，運動更有效率。";
   save();
+  render();
 }
 
 function buyAuto() {
   if (state.autoUnlocked) {
-    el.hint.textContent = "已經解鎖自動運動了。";
+    el.hint.textContent = "已解鎖自動運動。";
     return;
   }
   if (state.points < state.autoPrice) {
@@ -283,75 +353,255 @@ function buyAuto() {
   render();
 }
 
-// 自動運動：不顯示提示、不一直刷 hint（避免吵）
+function buyPlanner() {
+  if (state.plannerUnlocked) {
+    el.hint.textContent = "已解鎖事件預覽。";
+    return;
+  }
+  if (state.points < state.plannerPrice) {
+    el.hint.textContent = "點數不夠，先累積一下。";
+    return;
+  }
+  state.points -= state.plannerPrice;
+  state.plannerUnlocked = true;
+  el.hint.textContent = "✅ 解鎖成功！你可以提前預覽下一個事件了。";
+  save();
+  render();
+}
+
+/** ===== 自動運動（線上） ===== */
 function autoWorkoutStep() {
   if (!state.autoUnlocked) return;
-  if (state.energy < state.workoutCost) return;
-
-  state.energy -= state.workoutCost;
+  const cost = currentWorkoutCost();
+  if (state.energy < cost) return;
+  state.energy -= cost;
   state.health += workoutGain();
   clamp();
 }
 
+/** ===== Buff 到期處理 ===== */
+function handleBuffExpiration(now) {
+  if (!activeBuff) return;
+  if (now < activeBuff.endsAt) return;
 
-// ===== UI =====
+  // end bonus once
+  if (activeBuff.onEndBonusPoints && activeBuff.onEndBonusPoints > 0) {
+    state.points += activeBuff.onEndBonusPoints;
+    el.hint.textContent = `事件結束：${activeBuff.name}（補償 +${activeBuff.onEndBonusPoints} 點）`;
+  } else {
+    el.hint.textContent = `事件結束：${activeBuff.name}`;
+  }
+  activeBuff = null;
+}
+
+/** ===== 事件系統 ===== */
+function pickRandomEventId() {
+  const idx = Math.floor(Math.random() * EVENTS.length);
+  return EVENTS[idx].id;
+}
+
+function eventById(id) {
+  return EVENTS.find(e => e.id === id) || EVENTS[0];
+}
+
+function scheduleNextEvent(now) {
+  // 2~4 分鐘之間（MVP）
+  const delaySec = 120 + Math.floor(Math.random() * 120);
+  state.nextEventAt = now + delaySec * 1000;
+
+  // choose next event
+  state.nextEventId = pickRandomEventId();
+
+  // reset pre-decision if planner not unlocked
+  if (!state.plannerUnlocked) state.plannedDecision = "none";
+}
+
+function spawnNextEvent(now) {
+  const ev = eventById(state.nextEventId || pickRandomEventId());
+  state.eventActive = { id: ev.id };
+  // keep nextEventAt for countdown UI? we will reschedule after resolve
+  renderEventPanel(ev);
+}
+
+function renderEventPanel(ev) {
+  el.eventPanel.classList.remove("hidden");
+  el.eventTitle.textContent = ev.name;
+  el.eventType.textContent = ev.type;
+  el.eventDesc.textContent = ev.desc;
+  el.eventFinePrint.textContent = `效果：約 ${Math.round((ev.durationSec ?? 180)/60)} 分鐘。你可以接受或跳過。`;
+
+  // If planner unlocked and user already chose for next event, show it in plan line
+  // (Planning is for the upcoming event; once it is active, they still can click accept/skip normally)
+}
+
+function hideEventPanel() {
+  el.eventPanel.classList.add("hidden");
+}
+
+function acceptEvent() {
+  if (!state.eventActive) return;
+  const ev = eventById(state.eventActive.id);
+
+  // apply effect
+  ev.apply();
+
+  // clear active
+  state.eventActive = null;
+
+  // schedule next
+  scheduleNextEvent(Date.now());
+
+  hideEventPanel();
+  save();
+  render();
+}
+
+function skipEvent() {
+  if (!state.eventActive) return;
+  const ev = eventById(state.eventActive.id);
+  state.eventActive = null;
+
+  // small consolation for skipping? keep it neutral for MVP
+  el.hint.textContent = `你跳過了事件：${ev.name}`;
+
+  scheduleNextEvent(Date.now());
+  hideEventPanel();
+  save();
+  render();
+}
+
+/** ===== Planner：提前預覽與預先決策 ===== */
+function setPlannedDecision(decision) {
+  // decision for the next event (before it happens)
+  if (!state.plannerUnlocked) return;
+  if (!["none", "accept", "skip"].includes(decision)) return;
+  state.plannedDecision = decision;
+  save();
+  render();
+}
+
+/** ===== Prestige ===== */
+function canPrestige() {
+  return state.health >= 60;
+}
+
+function doPrestige() {
+  if (!canPrestige()) return;
+
+  state.prestigeLevel += 1;
+
+  // reset run progress
+  state.energy = 50;
+  state.health = 0;
+  state.shoesLevel = 0;
+
+  // keep: points (you can decide to reset points too; MVP keep points to reduce frustration)
+  // keep: auto/planner unlocks
+  // clear: buff & event active
+  activeBuff = null;
+  state.eventActive = null;
+  scheduleNextEvent(Date.now());
+  state.autoTimer = 0;
+
+  el.hint.textContent = `🌟 Prestige 成功！等級提升到 ${state.prestigeLevel}。`;
+  save();
+  render();
+}
+
+/** ===== UI ===== */
+function formatCountdown(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}分${r}秒` : `${r}秒`;
+}
+
+function renderTimeline(now) {
+  // show next event name
+  if (!state.nextEventId) state.nextEventId = pickRandomEventId();
+  const nextEv = eventById(state.nextEventId);
+
+  if (state.plannerUnlocked) {
+    el.nextEventName.textContent = nextEv.name;
+  } else {
+    el.nextEventName.textContent = "？？？（解鎖預覽可查看）";
+  }
+
+  el.nextEventCountdown.textContent = formatCountdown(state.nextEventAt - now);
+
+  if (!state.plannerUnlocked) {
+    el.nextEventPlan.textContent = "（未解鎖預先選擇）";
+  } else {
+    const map = { none: "未選擇", accept: "將接受", skip: "將跳過" };
+    el.nextEventPlan.textContent = map[state.plannedDecision] || "未選擇";
+  }
+}
+
 function render() {
+  const now = Date.now();
+
+  // top stats
   el.points.textContent = Math.floor(state.points);
   el.energy.textContent = Math.floor(state.energy);
   el.energyMax.textContent = state.energyMax;
   el.health.textContent = Math.floor(state.health);
   el.eff.textContent = efficiency().toFixed(2);
   el.regen.textContent = energyRegen().toFixed(2);
-  el.shoesPrice.textContent = `（${shoesPrice()} 點）`;
-
-  el.workoutBtn.disabled = state.energy < state.workoutCost;
-  el.buyShoesBtn.disabled = state.points < shoesPrice();
   el.modeName.textContent = modeMultipliers().name;
 
+  // shoes
+  el.shoesLevel.textContent = state.shoesLevel;
+  el.shoesPrice.textContent = `（${shoesPrice()} 點）`;
+
+  // buttons enabled
+  el.workoutBtn.disabled = state.energy < currentWorkoutCost();
+  el.buyShoesBtn.disabled = state.points < shoesPrice();
+
+  // auto
   el.autoStatus.textContent = state.autoUnlocked ? "已解鎖" : "未解鎖";
   el.autoPrice.textContent = `（${state.autoPrice} 點）`;
   el.buyAutoBtn.disabled = state.autoUnlocked || state.points < state.autoPrice;
 
-  // ===== 里程碑 UI =====
-  const ms = nextMilestone();
-  el.msTitle.textContent = ms.title;
+  // planner
+  el.plannerStatus.textContent = state.plannerUnlocked ? "已解鎖" : "未解鎖";
+  el.plannerPrice.textContent = `（${state.plannerPrice} 點）`;
+  el.buyPlannerBtn.disabled = state.plannerUnlocked || state.points < state.plannerPrice;
 
-  if (ms.target === null) {
-    el.msProgressText.textContent = "—";
-    el.msBar.style.width = "100%";
-  } else {
-    const cur = Math.max(0, Math.floor(state.health));
-    const pct = Math.max(0, Math.min(100, (cur / ms.target) * 100));
-    el.msBar.style.width = pct.toFixed(1) + "%";
-    el.msProgressText.textContent = `${cur} / ${ms.target}`;
-  }
-
-  // ===== Prestige UI =====
+  // prestige
   const p = prestigeMultipliers();
   el.prestigeLevel.textContent = state.prestigeLevel;
   el.prestigeBonus.textContent = `點數 x${p.points.toFixed(2)}、回復 x${p.regen.toFixed(2)}`;
-
   el.prestigeBtn.disabled = !canPrestige();
-  if (canPrestige()) {
-    el.prestigeHint.textContent = "✅ 你已達成條件，可以進行 Prestige。";
+  el.prestigeHint.textContent = canPrestige()
+    ? "✅ 你已達成條件，可以進行 Prestige。"
+    : `需要健康 ≥ 60（目前 ${Math.floor(state.health)}）`;
+
+  // event panel
+  if (state.eventActive) {
+    const ev = eventById(state.eventActive.id);
+    renderEventPanel(ev);
   } else {
-    el.prestigeHint.textContent = `需要健康 ≥ 60（目前 ${Math.floor(state.health)}）`;
+    hideEventPanel();
   }
 
+  // timeline
+  renderTimeline(now);
 }
 
-// ===== 主循環 =====
+/** ===== 主循環 ===== */
 let last = performance.now();
 function tick(now) {
   const dt = Math.min((now - last) / 1000, 0.25);
   last = now;
 
+  // buff expiration
+  handleBuffExpiration(Date.now());
+
+  // base regen & points
   state.energy += energyRegen() * dt;
   state.points += pointsPerSec() * dt;
 
-  checkMilestones();
-
-  // 自動運動計時
+  // auto workout timer
   if (state.autoUnlocked) {
     state.autoTimer += dt;
     while (state.autoTimer >= state.autoInterval) {
@@ -360,33 +610,67 @@ function tick(now) {
     }
   }
 
+  // event scheduler
+  const n = Date.now();
+  if (!state.eventActive && n >= state.nextEventAt) {
+    // spawn
+    spawnNextEvent(n);
+
+    // if planner has a pre-decision, auto resolve immediately
+    if (state.plannerUnlocked && state.plannedDecision !== "none") {
+      const decision = state.plannedDecision;
+      state.plannedDecision = "none";
+      if (decision === "accept") acceptEvent();
+      if (decision === "skip") skipEvent();
+    }
+  }
+
   clamp();
   render();
   requestAnimationFrame(tick);
 }
 
-// ===== 初始化 =====
+/** ===== 初始化 ===== */
 load();
+
+// if no nextEvent scheduled (old save)
+if (!state.nextEventAt || !state.nextEventId) {
+  scheduleNextEvent(Date.now());
+}
+
 offlineProgress();
 render();
 
+// actions
 el.restBtn.onclick = rest;
 el.workoutBtn.onclick = workout;
-el.prestigeBtn.onclick = doPrestige;
 el.buyShoesBtn.onclick = buyShoes;
+
 el.buyAutoBtn.onclick = buyAuto;
+el.buyPlannerBtn.onclick = buyPlanner;
 
 el.modeBalancedBtn.onclick = () => { state.mode = "balanced"; el.hint.textContent = "切換：平衡派"; save(); render(); };
 el.modeRecoveryBtn.onclick = () => { state.mode = "recovery"; el.hint.textContent = "切換：恢復派"; save(); render(); };
 el.modeSprintBtn.onclick = () => { state.mode = "sprint"; el.hint.textContent = "切換：衝刺派"; save(); render(); };
 
-setInterval(save, 10000);
+// event
+el.acceptEventBtn.onclick = acceptEvent;
+el.skipEventBtn.onclick = skipEvent;
+
+// prestige
+el.prestigeBtn.onclick = doPrestige;
+
+// autosave
+setInterval(save, 10_000);
 window.addEventListener("beforeunload", save);
 
 requestAnimationFrame(tick);
 
-// debug：在 console 輸入 resetGame() 可重來
+// debug helpers
 window.resetGame = () => {
   localStorage.removeItem(SAVE_KEY);
   location.reload();
 };
+window.peek = () => ({ state, activeBuff });
+window.planAccept = () => setPlannedDecision("accept");
+window.planSkip = () => setPlannedDecision("skip");

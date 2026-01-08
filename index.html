@@ -3,86 +3,150 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>健康 Idle MVP</title>
+  <title>Health Idle MVP</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <main class="wrap">
-    <h1>健康 Idle（MVP）</h1>
-
-    <section class="card">
-    <h2>生活型態</h2>
-    <div class="buttons">
-        <button id="modeBalancedBtn">⚖️ 平衡派</button>
-        <button id="modeRecoveryBtn">🧘 恢復派</button>
-        <button id="modeSprintBtn">🏃 衝刺派</button>
-    </div>
-    <p class="hint">目前模式：<b id="modeName">平衡派</b></p>
-    </section>
-    <section class="card">
-
-      <div class="row">
-        <div>🪙 習慣點數：<b id="points">0</b></div>
-        <div>⚡ 體力：<b id="energy">0</b> / <span id="energyMax">100</span></div>
+  <main class="app">
+    <header class="header">
+      <div>
+        <h1>Health Idle</h1>
+        <p class="sub">用節奏養成習慣，靠事件推進人生階段。</p>
       </div>
-      <div class="row">
-        <div>💚 健康值：<b id="health">0</b></div>
-        <div>📈 效率：<b id="eff">1.00</b>x</div>
+      <div class="pill">
+        <div class="pillLabel">習慣點數</div>
+        <div class="pillValue"><span id="points">0</span></div>
       </div>
-      <div class="row">
-        <div>⏱️ 體力恢復：<b id="regen">0</b>/秒</div>
-      </div>
-    </section>
-    <section class="card">
-      <h2>里程碑</h2>
+    </header>
 
-      <div class="milestone-line">
-        下一個目標：<b id="msTitle">—</b>
-      </div>
+    <section class="grid">
+      <!-- 左欄：狀態 -->
+      <section class="card">
+        <h2>狀態</h2>
 
-      <div class="progress-wrap">
-        <div id="msBar" class="progress-bar"></div>
-      </div>
+        <div class="statRow">
+          <div class="stat">
+            <div class="k">體力</div>
+            <div class="v"><span id="energy">0</span> / <span id="energyMax">0</span></div>
+          </div>
+          <div class="stat">
+            <div class="k">健康</div>
+            <div class="v"><span id="health">0</span></div>
+          </div>
+        </div>
 
-      <div class="milestone-line">
-        進度：<b id="msProgressText">—</b>
-      </div>
-    </section>
+        <div class="statRow">
+          <div class="stat">
+            <div class="k">效率</div>
+            <div class="v"><span id="eff">1.00</span>x</div>
+          </div>
+          <div class="stat">
+            <div class="k">回復/秒</div>
+            <div class="v"><span id="regen">0.00</span></div>
+          </div>
+        </div>
 
-    <section class="card">
-    <h2>人生重來（Prestige）</h2>
-    <div>🌟 Prestige 等級：<b id="prestigeLevel">0</b></div>
-    <div>永久加成：<b id="prestigeBonus">—</b></div>
-    <button id="prestigeBtn">🔁 進行 Prestige（需要健康 ≥ 60）</button>
-    <p id="prestigeHint" class="hint"></p>
-    </section>
+        <div class="divider"></div>
 
-    <section class="card">
-      <h2>行動</h2>
-      <div class="buttons">
-        <button id="restBtn">🛌 休息（+10 體力）</button>
-        <button id="workoutBtn">🏃 運動（-10 體力）</button>
-      </div>
-      <p class="hint" id="hint"></p>
-    </section>
+        <div class="muted small">
+          目前模式：<b id="modeName">平衡派</b>
+        </div>
 
-    <section class="card">
-      <h2>升級</h2>
-      <button id="buyShoesBtn">
-        👟 跑鞋（運動收益 +0.2）
-        <span id="shoesPrice"></span>
-      </button>
-    </section>
-    
-    <section class="card">
-    <h2>自動化</h2>
-    <div>🤖 自動運動：<b id="autoStatus">未解鎖</b></div>
-    <button id="buyAutoBtn">🤖 解鎖自動運動 <span id="autoPrice"></span></button>
-    <p class="hint">解鎖後每 5 秒嘗試自動運動一次（體力夠才會動）。</p>
+        <div class="btnRow">
+          <button id="modeBalancedBtn">⚖️ 平衡</button>
+          <button id="modeRecoveryBtn">🧘 恢復</button>
+          <button id="modeSprintBtn">🏃 衝刺</button>
+        </div>
+
+        <p class="hint" id="hint">提示會顯示在這裡。</p>
+      </section>
+
+      <!-- 中欄：行動與成長 -->
+      <section class="card">
+        <h2>行動</h2>
+
+        <div class="btnRow">
+          <button id="workoutBtn">🏋️ 運動（消耗 10 體力）</button>
+          <button id="restBtn">😴 休息（+10 體力）</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <h3>長期成長</h3>
+        <div class="line">
+          <button id="buyShoesBtn">👟 升級跑鞋</button>
+          <span class="muted" id="shoesPrice">（— 點）</span>
+        </div>
+
+        <div class="line">
+          <div class="muted">跑鞋等級：<b id="shoesLevel">0</b></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <h3>自動化</h3>
+        <div class="line">
+          🤖 自動運動：<b id="autoStatus">未解鎖</b>
+        </div>
+        <div class="line">
+          <button id="buyAutoBtn">解鎖自動運動</button>
+          <span class="muted" id="autoPrice">（— 點）</span>
+        </div>
+        <p class="muted small">解鎖後每 5 秒嘗試自動運動一次（體力夠才會動）。</p>
+
+        <div class="divider"></div>
+
+        <h3>規劃能力</h3>
+        <div class="line">
+          🗓️ 事件預覽：<b id="plannerStatus">未解鎖</b>
+        </div>
+        <div class="line">
+          <button id="buyPlannerBtn">解鎖「提前預覽下一個事件」</button>
+          <span class="muted" id="plannerPrice">（— 點）</span>
+        </div>
+        <p class="muted small">解鎖後可提前看到下一個事件，並可先選「接受/跳過」做預先決策。</p>
+      </section>
+
+      <!-- 右欄：事件與Prestige -->
+      <section class="card">
+        <h2>事件時間軸</h2>
+
+        <div class="timeline">
+          <div class="timelineItem">
+            <div class="k">下一個事件</div>
+            <div class="v"><b id="nextEventName">—</b></div>
+            <div class="muted small">倒數：<b id="nextEventCountdown">—</b></div>
+            <div class="muted small">狀態：<span id="nextEventPlan">—</span></div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div id="eventPanel" class="eventPanel hidden">
+          <div class="eventTitle">
+            <b id="eventTitle">事件</b>
+            <span class="badge" id="eventType">—</span>
+          </div>
+          <p class="eventDesc" id="eventDesc">—</p>
+          <div class="btnRow">
+            <button id="acceptEventBtn">✅ 接受</button>
+            <button id="skipEventBtn">⏭️ 跳過</button>
+          </div>
+          <p class="muted small" id="eventFinePrint">—</p>
+        </div>
+
+        <div class="divider"></div>
+
+        <h2>Prestige</h2>
+        <div class="line">🌟 等級：<b id="prestigeLevel">0</b></div>
+        <div class="line">永久加成：<b id="prestigeBonus">—</b></div>
+        <button id="prestigeBtn">🔁 人生重來（需要健康 ≥ 60）</button>
+        <p class="muted small" id="prestigeHint">—</p>
+      </section>
     </section>
 
     <footer class="footer">
-      <small>提示：健康值會讓所有成長變快，這是一個長期遊戲。</small>
+      <span class="muted small">小提醒：如果你更新後沒生效，請強制刷新（Ctrl+F5 / Cmd+Shift+R）。</span>
     </footer>
   </main>
 
