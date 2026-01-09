@@ -13,69 +13,47 @@
         <h1>Health Idle</h1>
         <p class="sub">自動跑步＋節奏管理：等結算、接贊助、買裝備，慢慢練出更強的你。</p>
       </div>
+
       <div class="headerRight">
         <div class="pill">
           <div class="pillLabel">金錢</div>
-          <div class="pillValue"><span id="points">0</span></div>
+          <div class="pillValue">$<span id="points">0</span></div>
         </div>
       </div>
     </header>
 
-    <!-- Tabs (below header, full row) -->
-    <nav class="tabs">
+    <!-- Tabs -->
+    <nav class="tabs" aria-label="navigation">
       <button class="tab active" id="tabHome">🏃 主頁</button>
       <button class="tab" id="tabShop">🛒 商店</button>
+      <!-- 🏁 賽事 會由 game.js 自動注入 -->
     </nav>
 
-    <!-- HOME PAGE -->
+    <!-- ========== HOME ========== -->
     <section id="pageHome">
       <!-- Track -->
       <section class="card">
         <div class="card-title">跑道</div>
 
         <div class="row between">
-          <div class="stack">
+          <div>
             <div class="muted micro">本圈進度</div>
             <div class="strong"><span id="lapMiles">0.00</span> / <span id="lapTarget">1.00</span> mile</div>
           </div>
-          <div class="stack right">
+          <div style="text-align:right;">
             <div class="muted micro">總里程</div>
             <div class="strong"><span id="totalMiles">0.0</span> miles</div>
           </div>
         </div>
 
-        <div class="trackWrap" style="margin-top:10px;">
-          <div class="trackLine">
-            <div id="lapBar" class="trackFill"></div>
-
-            <!-- runner -->
-            <div id="runner" class="runner" aria-label="runner">
-              <!-- simple 2D runner SVG with ids for animation -->
-              <svg width="34" height="34" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-                <circle id="head" cx="44" cy="14" r="7" fill="currentColor" opacity="0.95"/>
-                <path id="torso" d="M18 30 L30 24 L38 30 L28 36 Z" fill="currentColor" opacity="0.95"/>
-
-                <!-- arm -->
-                <path id="arm" d="M38 30 L52 38" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
-
-                <!-- body -->
-                <path id="body" d="M30 24 L26 44" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
-
-                <!-- legs -->
-                <path id="leg1" d="M26 44 L14 56" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
-                <path id="leg2" d="M26 44 L40 58" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
-              </svg>
-            </div>
-          </div>
-
-          <div class="trackMarks">
-            <span>0</span><span>0.25</span><span>0.5</span><span>0.75</span><span>1.0</span>
-          </div>
+        <div class="progress-wrap" style="margin-top:10px;">
+          <div id="lapBar" class="progress-bar"></div>
+          <div id="runner" class="runner" aria-hidden="true">🏃</div>
         </div>
 
         <div class="row between" style="margin-top:10px;">
-          <div class="micro muted">下一個解鎖：<b id="nextUnlockText">—</b></div>
-          <div class="badge" id="activity">—</div>
+          <div class="muted small">狀態：<b id="activity">—</b></div>
+          <div class="muted small">下一個解鎖：<b id="nextUnlockText">—</b></div>
         </div>
       </section>
 
@@ -99,11 +77,11 @@
 
           <div class="statRow">
             <div class="stat">
-              <div class="k">心肺 Cardio</div>
+              <div class="k">心肺倍率</div>
               <div class="v"><span id="cardio">1.00</span>x</div>
             </div>
             <div class="stat">
-              <div class="k">恢復 Recovery</div>
+              <div class="k">恢復倍率</div>
               <div class="v"><span id="recovery">1.00</span>x</div>
             </div>
           </div>
@@ -111,7 +89,7 @@
           <div class="statRow">
             <div class="stat">
               <div class="k">跑速</div>
-              <div class="v"><span id="speed">0.00</span> mi/min</div>
+              <div class="v"><span id="speed">0.00</span> mile/min</div>
             </div>
             <div class="stat">
               <div class="k">回復/秒</div>
@@ -119,42 +97,36 @@
             </div>
           </div>
 
-          <div class="divider"></div>
-          <div class="muted small">提示：</div>
           <p class="hint" id="hint">提示會顯示在這裡。</p>
         </section>
 
-        <!-- Actions -->
+        <!-- Actions + Sponsor -->
         <section class="card">
           <h2>行動</h2>
-          <p class="muted small">角色會自動跑步 / 休息。你可以用低頻介入來提升成長。</p>
-
-          <div class="btnRow" style="margin-top:10px;">
-            <button id="workoutBtn">🏋️ 訓練（提升健康）</button>
+          <div class="btnRow">
+            <button id="workoutBtn">🏋️ 訓練（消耗體力）</button>
             <button id="restBtn">😴 小睡（回體力）</button>
           </div>
 
           <div class="divider"></div>
 
-          <h3>贊助 / 招標（主要金錢來源）</h3>
-          <div class="line between">
-            <button id="sponsorBtn">📣 申請贊助</button>
-            <span class="badge subtle" id="sponsorStatus">可領取</span>
+          <h3>贊助</h3>
+          <div class="row between">
+            <div class="muted small">狀態：<b id="sponsorStatus">—</b></div>
+            <div class="muted small">倒數：<b id="sponsorCountdown">—</b></div>
           </div>
-          <div class="muted small" style="margin-top:6px;">
-            倒數：<b id="sponsorCountdown">—</b>　｜　下一次冷卻：<b id="sponsorNextCd">—</b>
+          <div class="row between" style="margin-top:8px;">
+            <button id="sponsorBtn">📣 領取贊助</button>
+            <div class="muted small">下一次冷卻會變成：<b id="sponsorNextCd">—</b></div>
           </div>
-          <p class="muted micro" style="margin-top:6px;">
-            低頻決策按鈕：越後面冷卻越長，但可能出現大成功（也可能失敗）。
-          </p>
 
           <div class="divider"></div>
 
-          <h3>裝備摘要</h3>
-          <div class="muted small" id="equipSummary">尚未裝備任何東西。</div>
+          <h3>裝備</h3>
+          <div class="muted small" id="equipSummary">—</div>
         </section>
 
-        <!-- Events -->
+        <!-- Timeline + Event -->
         <section class="card">
           <h2>事件時間軸</h2>
 
@@ -170,48 +142,35 @@
           <div class="divider"></div>
 
           <div id="eventPanel" class="eventPanel hidden">
-            <div class="eventTitleRow">
+            <div class="eventTitle">
               <b id="eventTitle">事件</b>
               <span class="badge" id="eventType">—</span>
             </div>
             <p class="eventDesc" id="eventDesc">—</p>
-
             <div class="btnRow">
               <button id="acceptEventBtn">✅ 接受</button>
               <button id="skipEventBtn">⏭️ 跳過</button>
             </div>
-
             <p class="muted small" id="eventFinePrint">—</p>
           </div>
 
-          <div class="divider"></div>
-
-          <h3>里程解鎖</h3>
-          <ul class="bullets">
-            <li>里程達標會解鎖更強的贊助結果、與新裝備</li>
-            <li>跑完一圈會結算一次，給你「等待的爽點」</li>
-          </ul>
+          <p class="muted small">小提示：事件會短暫影響「跑速 / 回復」。接受才會生效。</p>
         </section>
       </section>
     </section>
 
-    <!-- SHOP PAGE -->
+    <!-- ========== SHOP ========== -->
     <section id="pageShop" class="hidden">
       <section class="card">
         <div class="card-title">商店</div>
-        <div class="row between">
-          <div class="muted small">買裝備來提升「心肺」與「恢復」，讓你跑更久、休更快。</div>
-          <div class="badge subtle">提示：同類只取最高等級（避免複雜）</div>
-        </div>
-
-        <div class="divider"></div>
+        <p class="muted small">買到的裝備會自動裝備（同欄位會被替換）。</p>
 
         <div class="shopGrid" id="shopList"></div>
 
         <div class="divider"></div>
 
         <h3>已擁有</h3>
-        <div class="owned" id="ownedList">（尚未購買任何裝備）</div>
+        <pre class="owned" id="ownedList">（尚未購買任何裝備）</pre>
       </section>
     </section>
 
