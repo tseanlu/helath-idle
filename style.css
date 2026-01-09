@@ -5,8 +5,8 @@
   --text:#e9f2ff;
   --muted:#9fb3d9;
   --line:#19314f;
-  --accent:#49d3ff;     /* sport neon */
-  --accent2:#4fe3a4;    /* stamina green */
+  --accent:#49d3ff;
+  --accent2:#4fe3a4;
   --warn:#ffd36a;
   --bad:#ff6a6a;
   --shadow:0 10px 30px rgba(0,0,0,.35);
@@ -142,7 +142,6 @@ button:disabled{ opacity:.5; cursor:not-allowed; }
 .hidden{ display:none !important; }
 
 /* Track */
-.trackWrap{ }
 .trackLine{
   position: relative;
   height: 14px;
@@ -163,6 +162,7 @@ button:disabled{ opacity:.5; cursor:not-allowed; }
   transform: translate(-50%, -65%);
   color: var(--accent);
   filter: drop-shadow(0 6px 10px rgba(0,0,0,.35));
+  will-change: transform;
 }
 .trackMarks{
   display:flex;
@@ -170,6 +170,52 @@ button:disabled{ opacity:.5; cursor:not-allowed; }
   margin-top: 6px;
   color: rgba(159,179,217,.70);
   font-size: 10px;
+}
+
+/* ✅ Runner animation */
+.runner svg { overflow: visible; }
+
+.runner.running{
+  animation: runner-bob 0.35s infinite ease-in-out;
+}
+@keyframes runner-bob{
+  0%,100% { transform: translate(-50%, -65%) rotate(-1deg); }
+  50%     { transform: translate(-50%, -70%) rotate( 1deg); }
+}
+
+/* limbs swing (only when running) */
+.runner.running svg #leg1,
+.runner.running svg #leg2,
+.runner.running svg #arm{
+  transform-box: fill-box;
+  transform-origin: 26px 44px; /* around hip-ish */
+}
+.runner.running svg #leg1{
+  animation: leg-swing 0.28s infinite ease-in-out;
+}
+.runner.running svg #leg2{
+  animation: leg-swing 0.28s infinite ease-in-out reverse;
+}
+.runner.running svg #arm{
+  transform-origin: 38px 30px;
+  animation: arm-swing 0.28s infinite ease-in-out reverse;
+}
+@keyframes leg-swing{
+  0%,100% { transform: rotate( 14deg); }
+  50%     { transform: rotate(-14deg); }
+}
+@keyframes arm-swing{
+  0%,100% { transform: rotate(-12deg); }
+  50%     { transform: rotate( 12deg); }
+}
+
+/* resting style */
+.runner.resting{
+  opacity: .75;
+  filter: drop-shadow(0 4px 8px rgba(0,0,0,.30));
+}
+.runner.resting svg{
+  transform: rotate(-6deg);
 }
 
 /* Stats */
@@ -268,6 +314,7 @@ button:disabled{ opacity:.5; cursor:not-allowed; }
   border:1px solid rgba(159,179,217,.12);
   border-radius: 14px;
   padding: 10px;
+  white-space: pre-line;
 }
 
 .footer{ margin-top:14px; padding:10px 2px 0; text-align:center; }

@@ -47,19 +47,27 @@
         <div class="trackWrap" style="margin-top:10px;">
           <div class="trackLine">
             <div id="lapBar" class="trackFill"></div>
+
             <!-- runner -->
             <div id="runner" class="runner" aria-label="runner">
-              <!-- simple 2D runner SVG -->
+              <!-- simple 2D runner SVG with ids for animation -->
               <svg width="34" height="34" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-                <circle cx="44" cy="14" r="7" fill="currentColor" opacity="0.95"/>
-                <path d="M18 30 L30 24 L38 30 L28 36 Z" fill="currentColor" opacity="0.95"/>
-                <path d="M30 24 L26 44" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
-                <path d="M38 30 L52 38" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
-                <path d="M26 44 L14 56" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
-                <path d="M26 44 L40 58" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+                <circle id="head" cx="44" cy="14" r="7" fill="currentColor" opacity="0.95"/>
+                <path id="torso" d="M18 30 L30 24 L38 30 L28 36 Z" fill="currentColor" opacity="0.95"/>
+
+                <!-- arm -->
+                <path id="arm" d="M38 30 L52 38" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+
+                <!-- body -->
+                <path id="body" d="M30 24 L26 44" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+
+                <!-- legs -->
+                <path id="leg1" d="M26 44 L14 56" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+                <path id="leg2" d="M26 44 L40 58" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
               </svg>
             </div>
           </div>
+
           <div class="trackMarks">
             <span>0</span><span>0.25</span><span>0.5</span><span>0.75</span><span>1.0</span>
           </div>

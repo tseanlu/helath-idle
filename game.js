@@ -8,6 +8,7 @@
    ========================================================= */
 
 const SAVE_KEY = "health_idle_sport_v1";
+const BUILD = "2026-01-08a";
 
 /** ---------------- State ---------------- */
 const state = {
@@ -646,6 +647,15 @@ function render() {
   // runner is absolutely positioned in trackLine; we map to %
   el.runner.style.left = (lapPct * 100).toFixed(2) + "%";
 
+  // runner animation state (requires CSS .runner.running / .runner.resting)
+  if (el.runner) {
+    el.runner.classList.toggle("running", state.activity === "running");
+    el.runner.classList.toggle("resting", state.activity !== "running");
+  }
+  if (el.activity) {
+    el.activity.textContent = state.activity === "running" ? "🏃 跑步中" : "😴 休息中";
+  }
+
   // activity badge
   el.activity.textContent = state.activity === "running" ? "🏃 跑步中" : "😴 休息中";
 
@@ -772,3 +782,4 @@ requestAnimationFrame(tick);
 // debug helper
 window.resetGame = () => { localStorage.removeItem(SAVE_KEY); location.reload(); };
 window.state = state;
+window.BUILD = BUILD;
