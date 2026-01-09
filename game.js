@@ -8,7 +8,7 @@
    ========================================================= */
 
 const SAVE_KEY = "health_idle_sport_v1";
-const BUILD = "2026-01-08a";
+const BUILD = "2026-01-08b"; // race system
 
 /** ---------------- State ---------------- */
 const state = {
@@ -42,6 +42,16 @@ const state = {
     tier: 0,               // increases each claim
     nextAt: Date.now(),    // when claim available
     lastResult: null
+  },
+
+  // Races (5K/10K/HM/Marathon) — simulated competitions with countdown + results
+  race: {
+    status: "idle",        // idle | countdown | running | finished
+    distKey: null,          // "5k" | "10k" | "hm" | "m"
+    startAt: 0,
+    endAt: 0,
+    simFinishMin: 0,
+    result: null            // { distLabel, simFinishMin, place, field, reward, percentile }
   },
 
   // Equipment ownership
@@ -148,6 +158,20 @@ const el = {
   ownedList: document.getElementById("ownedList")
 };
 
+// Race UI nodes are created dynamically (so you don't need to edit index.html)
+el.race = {
+  wrap: null,
+  status: null,
+  countdown: null,
+  dist: null,
+  join5k: null,
+  join10k: null,
+  joinHM: null,
+  joinM: null,
+  cancel: null,
+  result: null
+};
+
 /** ---------------- Utils ---------------- */
 function clamp() {
   state.energy = Math.max(0, Math.min(state.energy, state.energyMax));
@@ -172,6 +196,7 @@ function load() {
 
     // defensive defaults
     if (!state.sponsor) state.sponsor = { tier: 0, nextAt: Date.now(), lastResult: null };
+    if (!state.race) state.race = { status: "idle", distKey: null, startAt: 0, endAt: 0, simFinishMin: 0, result: null };
     if (!state.owned) state.owned = { shoes: null, clothes: null, towel: null, goggles: null };
     if (!state.nextEventAt) state.nextEventAt = Date.now() + 90_000;
     if (!state.activity) state.activity = "running";
@@ -288,6 +313,141 @@ function claimSponsor() {
   el.hint.textContent = `📣 贊助${result.kind}：+$${result.money}，健康 ${result.healthDelta >= 0 ? "+" : ""}${result.healthDelta.toFixed(1)}`;
   save();
   render();
+}
+
+/** ---------------- Races ----------------
+  - Player joins a distance (5K / 10K / HM / Marathon)
+  - Countdown starts, then a short simulated race runs
+  - Results show: time + placing + reward
+  Note: We use real-world distance labels, but compress the time so it's fun on web.
+*/
+
+const RACE_DIST = {
+  "5k": { label: "5K", miles: 3.1069, field: 2500, meanMin: 31, sdMin: 8 },
+  "10k": { label: "10K", miles: 6.2137, field: 3000, meanMin: 64, sdMin: 14 },
+  "hm": { label: "半馬", miles: 13.1094, field: 4000, meanMin: 130, sdMin: 28 },
+  "m": { label: "全馬", miles: 26.2188, field: 5000, meanMin: 260, sdMin: 55 }
+};
+
+function normalCdfApprox(z) {
+  // Abramowitz-Stegun approximation for Phi(z)
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp(-z * z / 2);
+  let p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  if (z > 0) p = 1 - p;
+  return Math.max(0, Math.min(1, p));
+}
+
+function computeSimFinishMinutes(distKey) {
+  const d = RACE_DIST[distKey];
+  // base pace (min/mile) adjusted by cardio + energy + randomness
+  const basePace = 10.5; // casual runner baseline
+  const eRatio = state.energyMax > 0 ? (state.energy / state.energyMax) : 0;
+  const fatigue = (eRatio < 0.4) ? (1 + (0.4 - eRatio) * 0.8) : 1; // low energy hurts
+  const rand = 0.92 + Math.random() * 0.18; // 0.92~1.10
+  const pace = (basePace / cardioMult()) * fatigue * rand;
+  return d.miles * pace;
+}
+
+function compressRaceSeconds(simFinishMin) {
+  // compress real-world minutes into a short, satisfying web duration
+  // ~ 2 seconds per minute, capped 25~200 sec
+  return Math.max(25, Math.min(200, simFinishMin * 2));
+}
+
+function computePlacing(distKey, simFinishMin) {
+  const d = RACE_DIST[distKey];
+  const z = (simFinishMin - d.meanMin) / (d.sdMin || 1);
+  // lower time = better (smaller z)
+  const cdf = normalCdfApprox(z);
+  const percentile = 1 - cdf; // higher is better
+  const place = Math.max(1, Math.min(d.field, Math.floor((1 - percentile) * d.field) + 1));
+  return { percentile, place, field: d.field };
+}
+
+function raceReward(distKey, percentile) {
+  // money reward scales with distance + performance
+  const d = RACE_DIST[distKey];
+  const distBase = 20 * d.miles; // distance-based
+  const perf = 0.8 + percentile * 1.4; // 0.8~2.2
+  const unlockBonus = 1 + Math.min(0.35, state.totalMiles / 100); // small late-game bump
+  return Math.floor(distBase * perf * unlockBonus);
+}
+
+function startRace(distKey) {
+  if (state.race.status === "countdown" || state.race.status === "running") {
+    el.hint.textContent = "你已經在一場賽事流程中了。";
+    return;
+  }
+  const d = RACE_DIST[distKey];
+  if (!d) return;
+
+  const now = Date.now();
+  state.race.status = "countdown";
+  state.race.distKey = distKey;
+  state.race.startAt = now + 30_000; // 30s countdown
+  state.race.simFinishMin = computeSimFinishMinutes(distKey);
+  state.race.endAt = state.race.startAt + compressRaceSeconds(state.race.simFinishMin) * 1000;
+  state.race.result = null;
+
+  el.hint.textContent = `🏁 已報名 ${d.label}，30 秒後開跑！`;
+  save();
+  render();
+}
+
+function cancelRace() {
+  if (state.race.status === "idle" || state.race.status === "finished") {
+    state.race.status = "idle";
+    state.race.distKey = null;
+    state.race.result = null;
+    save();
+    render();
+    return;
+  }
+  state.race.status = "idle";
+  state.race.distKey = null;
+  state.race.result = null;
+  el.hint.textContent = "已取消賽事。";
+  save();
+  render();
+}
+
+function updateRaceLifecycle() {
+  const now = Date.now();
+  if (!state.race) return;
+
+  if (state.race.status === "countdown" && now >= state.race.startAt) {
+    state.race.status = "running";
+    const d = RACE_DIST[state.race.distKey];
+    el.hint.textContent = `🏃‍♂️ ${d?.label || "賽事"} 開跑！`;
+    save();
+  }
+
+  if (state.race.status === "running" && now >= state.race.endAt) {
+    const distKey = state.race.distKey;
+    const d = RACE_DIST[distKey];
+    const simFinishMin = state.race.simFinishMin || computeSimFinishMinutes(distKey);
+    const placing = computePlacing(distKey, simFinishMin);
+    const reward = raceReward(distKey, placing.percentile);
+
+    state.money += reward;
+    // small training benefit for finishing
+    state.health += 0.35;
+
+    state.race.status = "finished";
+    state.race.result = {
+      distLabel: d?.label || distKey,
+      simFinishMin,
+      place: placing.place,
+      field: placing.field,
+      reward,
+      percentile: placing.percentile
+    };
+
+    clamp();
+    el.hint.textContent = `🎉 完賽 ${state.race.result.distLabel}！名次 ${placing.place}/${placing.field}，+$${reward}`;
+    save();
+  }
 }
 
 /** ---------------- Events ---------------- */
@@ -521,6 +681,113 @@ function equippedSummaryText() {
   return parts.length ? parts.join(" / ") : "尚未裝備任何東西。";
 }
 
+/** ---------------- Race UI (dynamic injection) ---------------- */
+function createRaceUI() {
+  // try to attach into the "Actions" card (where Sponsor is)
+  const hostCard = el.sponsorBtn?.closest?.(".card") || null;
+  if (!hostCard) return;
+  if (el.race.wrap) return;
+
+  const divider = document.createElement("div");
+  divider.className = "divider";
+  hostCard.appendChild(divider);
+
+  const title = document.createElement("h3");
+  title.textContent = "賽事";
+  hostCard.appendChild(title);
+
+  const status = document.createElement("div");
+  status.className = "line between";
+  status.innerHTML = `<span>🏁 賽事狀態：<b id="raceStatus">未報名</b></span><span class="badge subtle" id="raceDist">—</span>`;
+  hostCard.appendChild(status);
+
+  const sub = document.createElement("div");
+  sub.className = "muted small";
+  sub.innerHTML = `倒數：<b id="raceCountdown">—</b>`;
+  hostCard.appendChild(sub);
+
+  const btnRow = document.createElement("div");
+  btnRow.className = "btnRow";
+  btnRow.style.marginTop = "10px";
+  btnRow.innerHTML = `
+    <button id="race5k">報名 5K</button>
+    <button id="race10k">報名 10K</button>
+    <button id="raceHM">報名 半馬</button>
+    <button id="raceM">報名 全馬</button>
+    <button id="raceCancel">取消/清除</button>
+  `;
+  hostCard.appendChild(btnRow);
+
+  const result = document.createElement("div");
+  result.className = "muted small";
+  result.style.marginTop = "8px";
+  result.id = "raceResult";
+  result.textContent = "完成賽事後會顯示名次與獎勵。";
+  hostCard.appendChild(result);
+
+  // bind nodes
+  el.race.wrap = hostCard;
+  el.race.status = hostCard.querySelector("#raceStatus");
+  el.race.countdown = hostCard.querySelector("#raceCountdown");
+  el.race.dist = hostCard.querySelector("#raceDist");
+  el.race.join5k = hostCard.querySelector("#race5k");
+  el.race.join10k = hostCard.querySelector("#race10k");
+  el.race.joinHM = hostCard.querySelector("#raceHM");
+  el.race.joinM = hostCard.querySelector("#raceM");
+  el.race.cancel = hostCard.querySelector("#raceCancel");
+  el.race.result = hostCard.querySelector("#raceResult");
+
+  // handlers
+  el.race.join5k.onclick = () => startRace("5k");
+  el.race.join10k.onclick = () => startRace("10k");
+  el.race.joinHM.onclick = () => startRace("hm");
+  el.race.joinM.onclick = () => startRace("m");
+  el.race.cancel.onclick = () => cancelRace();
+}
+
+function formatMinutes(min) {
+  const total = Math.max(0, Math.round(min * 60));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+  return `${m}:${String(s).padStart(2,"0")}`;
+}
+
+function renderRace() {
+  if (!el.race.status) return;
+  const now = Date.now();
+  const r = state.race;
+  const d = r.distKey ? RACE_DIST[r.distKey] : null;
+
+  let statusText = "未報名";
+  if (r.status === "countdown") statusText = "倒數中";
+  if (r.status === "running") statusText = "進行中";
+  if (r.status === "finished") statusText = "已結算";
+
+  el.race.status.textContent = statusText;
+  el.race.dist.textContent = d ? d.label : "—";
+
+  let cdMs = 0;
+  if (r.status === "countdown") cdMs = r.startAt - now;
+  else if (r.status === "running") cdMs = r.endAt - now;
+  else cdMs = 0;
+  el.race.countdown.textContent = (r.status === "idle") ? "—" : fmtMMSS(cdMs);
+
+  const busy = (r.status === "countdown" || r.status === "running");
+  el.race.join5k.disabled = busy;
+  el.race.join10k.disabled = busy;
+  el.race.joinHM.disabled = busy;
+  el.race.joinM.disabled = busy;
+
+  if (r.status === "finished" && r.result) {
+    const pct = Math.round((r.result.percentile || 0) * 100);
+    el.race.result.textContent = `🎉 ${r.result.distLabel} 完賽：${formatMinutes(r.result.simFinishMin)}｜名次 ${r.result.place}/${r.result.field}（前 ${pct}%）｜獎勵 +$${r.result.reward}`;
+  } else {
+    el.race.result.textContent = "完成賽事後會顯示名次與獎勵。";
+  }
+}
+
 function renderShop() {
   if (!el.shopList) return;
 
@@ -713,6 +980,9 @@ function render() {
     el.skipEventBtn.disabled = !!state.event.accepted;
   }
 
+  // race UI
+  renderRace();
+
   // buttons
   el.workoutBtn.disabled = state.energy < 18;
 }
@@ -737,6 +1007,7 @@ function tick(now) {
   last = now;
 
   updateEventLifecycle();
+  updateRaceLifecycle();
   stepActivity(dt);
 
   clamp();
@@ -757,6 +1028,9 @@ function init() {
 
   // sponsor
   el.sponsorBtn.onclick = claimSponsor;
+
+  // inject race UI (no HTML edits needed)
+  createRaceUI();
 
   // events
   el.acceptEventBtn.onclick = acceptEvent;
