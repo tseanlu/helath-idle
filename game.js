@@ -1,1046 +1,338 @@
-/* Training Idle v3 (full) – no prestige
-   - Stats: VO2 (25..75), Endurance/Strength/Recovery (0..100)
-   - Short-term: Fatigue (0..160), Condition (-0.15..+0.15)
-   - Training tracks: Run/Bike/Swim/Hike with Lv1..Lv10
-   - Races: 5K/10K/Half/Marathon (validate build; fatigue hit)
-   - Shop: equipment multipliers by slot
-   - Sponsor button: cooldown grows each use (2m, 5m, 10m, 30m, ...)
-   - Save/load + offline resolution + daily modifiers roll
-*/
+const SAVE_KEY="training_idle_v2_0";
+const TRACKS=[{id:"run",name:"Run",icon:"🏃",main:"vo2",alt:"endurance"},{id:"bike",name:"Bike",icon:"🚴",main:"endurance",alt:"technique"},{id:"swim",name:"Swim",icon:"🏊",main:"recovery",alt:"endurance"},{id:"hike",name:"Hike",icon:"⛰️",main:"strength",alt:"endurance"}];
+const RACES={"5k":{name:"5K",km:5,focus:"speed"},"10k":{name:"10K",km:10,focus:"steady"},"hm":{name:"Half",km:21.1,focus:"endurance"},"fm":{name:"Marathon",km:42.2,focus:"endurance"}};
+const FORM=[{emoji:"😫",mult:.90,color:"bad"},{emoji:"😐",mult:1.00,color:"warn"},{emoji:"🙂",mult:1.06,color:"good"},{emoji:"🔥",mult:1.12,color:"good"}];
 
-const SAVE_KEY = "training_idle_v3_full";
-const BUILD = "2026-01-12";
-
-const DAY_MS = 6 * 60 * 60 * 1000;      // 6 hours per in-game day (real-time)
-const OFFLINE_CAP_MS = 8 * 60 * 60 * 1000;
-
-const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
-const fmt1 = (x) => (Math.round(x * 10) / 10).toFixed(1);
-const fmt2 = (x) => (Math.round(x * 100) / 100).toFixed(2);
-const now = () => Date.now();
-
-function rand01() { return Math.random(); }
-function pick(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
-function msToClock(ms){
-  if (ms <= 0) return "0s";
-  const s = Math.floor(ms/1000);
-  const hh = Math.floor(s/3600);
-  const mm = Math.floor((s%3600)/60);
-  const ss = s%60;
-  if (hh>0) return `${hh}h ${mm}m`;
-  if (mm>0) return `${mm}m ${ss}s`;
-  return `${ss}s`;
-}
-
-/** ---------------- State ---------------- */
-const state = {
-  money: 0,
-
-  // long-term
-  vo2: 25,          // 25..75
-  endurance: 8,     // 0..100
-  strength: 6,
-  recovery: 8,
-
-  // short-term
-  fatigue: 18,      // 0..160
-  condition: 0.00,  // -0.15..+0.15
-
-  day: 1,
-  nextDailyAt: now() + DAY_MS,
-  dailyMods: [],
-
-  // training progression
-  track: {
-    run:  { unlockedLevel: 1, clears: Array(10).fill(0) },
-    bike: { unlockedLevel: 1, clears: Array(10).fill(0) },
-    swim: { unlockedLevel: 1, clears: Array(10).fill(0) },
-    hike: { unlockedLevel: 1, clears: Array(10).fill(0) },
-  },
-
-  training: null, // {trackId, level, startedAt, endAt}
-
-  lastOutcome: null, // {trackId, level, outcome, moneyGain}
-  finishAnim: null, // {kind, until}
-  autoRepeat: true,
-  lastTrainingPick: { trackId: 'run', level: 1 },
-
-  // shop
-  owned: {}, // itemId: true
-  equipped: { shoes:null, top:null, towel:null, poles:null },
-
-  // sponsor
-  sponsorStep: 0,
-  sponsorReadyAt: 0,
-
-  lastSeen: now(),
+const state={money:0,energy:70,energyMax:100,fitness:1,formIdx:2,
+  vo2:25,endurance:8,strength:6,recovery:8,technique:5,
+  unlocked:{run:1,bike:1,swim:1,hike:1},gear:{shoes:0,goggles:0,towel:0,windbreaker:0},
+  autoRepeat:true,training:null,lastOutcome:null,overlayUntil:0,lastSeen:Date.now()
 };
 
-/** ---------------- Content ---------------- */
-const TRACKS = [
-  { id:"run",  name:"Run",  icon:"🏃", main:"vo2",  alt:"endurance" },
-  { id:"bike", name:"Bike", icon:"🚴", main:"endurance", alt:"strength" },
-  { id:"swim", name:"Swim", icon:"🏊", main:"recovery", alt:"vo2" },
-  { id:"hike", name:"Hike", icon:"⛰️", main:"strength", alt:"endurance" },
-];
+const $=id=>document.getElementById(id);
+const el={
+  energyBar:$("energyBar"),energyText:$("energyText"),fitnessText:$("fitnessText"),formText:$("formText"),moneyText:$("moneyText"),
+  trackFill:$("trackFill"),runner:$("runner"),stageMode:$("stageMode"),stageNow:$("stageNow"),stagePct:$("stagePct"),
+  stageOverlay:$("stageOverlay"),confetti:$("confetti"),
+  tabs:[...document.querySelectorAll(".tabBtn")],
+  panels:{training:$("tab-training"),race:$("tab-race"),shop:$("tab-shop"),settings:$("tab-settings")},
+  tracks:$("tracks"),levels:$("levels"),selectedText:$("selectedText"),startBtn:$("startBtn"),hint:$("hint"),
+  autoRepeatToggle:$("autoRepeatToggle"),
+  raceCards:[...document.querySelectorAll(".raceCard")],raceBtn:$("raceBtn"),raceResult:$("raceResult"),
+  shopGrid:$("shopGrid"),
+  exportBtn:$("exportBtn"),importBtn:$("importBtn"),resetBtn:$("resetBtn"),debug:$("debug"),
+};
 
-function levelReq(level){
-  // required readiness increases gently
-  // L1 ~ 0.22, L10 ~ 0.72
-  return 0.18 + level * 0.055;
+let selected={trackId:"run",level:1};
+let selectedRace="5k";
+
+const now=()=>Date.now();
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const rand01=()=>Math.random();
+const fmt0=n=>Math.floor(n).toString();
+const msToClock=ms=>{const s=Math.max(0,Math.floor(ms/1000));const m=Math.floor(s/60);const r=s%60;return m>0?`${m}m ${r}s`:`${r}s`;};
+
+function energyRegenPerSec(){const gear=1+state.gear.towel*.03+state.gear.windbreaker*.01;return(.45+state.recovery*.018)*gear;}
+function trainingCostEnergy(lv){const gear=1-state.gear.shoes*.02;return Math.max(6,Math.floor((8+lv*3)*gear));}
+function levelDurationMs(lv){return(18+lv*7)*1000;}
+function baseMoneyReward(lv){return Math.floor(6+lv*4.5);}
+function trainingSuccessProb(trackId,lv){
+  const t=TRACKS.find(x=>x.id===trackId);
+  const main=state[t.main],alt=state[t.alt],fit=state.fitness;
+  const skill=main*.85+alt*.45+fit*.25;
+  const req=20+lv*9;
+  let p=1/(1+Math.exp(-(skill-req)/6.5));
+  p=clamp(p,.05,.95);
+  p*=FORM[state.formIdx].mult;
+  return clamp(p,.03,.97);
+}
+function computeFitness(){
+  const base=state.vo2*1.2+state.endurance*1.0+state.strength*.8+state.recovery*.7+state.technique*.6;
+  const gearMul=1+state.gear.shoes*.03+state.gear.goggles*.02+state.gear.windbreaker*.015;
+  return Math.max(1,Math.floor(base*.55*gearMul));
+}
+function updateForm(){
+  const r=state.energy/state.energyMax;
+  let idx=r<.25?0:r<.50?1:r<.78?2:3;
+  if(state.recovery>=14 && idx<3) idx+=1;
+  state.formIdx=clamp(idx,0,3);
 }
 
-function levelDurationMs(level){
-  // L1 25s -> L10 90s
-  return Math.floor((20 + level*7) * 1000);
+function save(){localStorage.setItem(SAVE_KEY,JSON.stringify({...state,lastSeen:now()}));}
+function load(){const raw=localStorage.getItem(SAVE_KEY);if(!raw) return false; try{Object.assign(state,JSON.parse(raw));return true;}catch{ return false;}}
+function offlineProgress(){const sec=clamp((now()-state.lastSeen)/1000,0,12*3600);state.energy=clamp(state.energy+energyRegenPerSec()*sec,0,state.energyMax);updateForm();}
+
+function tabTo(id){
+  for(const b of el.tabs) b.classList.toggle("active",b.dataset.tab===id);
+  for(const k of Object.keys(el.panels)) el.panels[k].classList.toggle("active",k===id);
 }
 
-function levelRewardBase(level){
-  // money reward baseline
-  return 6 + level * 3;
-}
+function pctClass(p){return p>=.70?"good":p>=.45?"warn":"bad";}
 
-const SHOP_ITEMS = [
-  // shoes (VO2)
-  { id:"shoes_1", slot:"shoes", name:"Trainer Shoes", price:60,  mult:{vo2:1.05}, desc:"+5% VO₂ (eff)" },
-  { id:"shoes_2", slot:"shoes", name:"Carbon Shoes",  price:180, mult:{vo2:1.10}, desc:"+10% VO₂ (eff)" },
-  { id:"shoes_3", slot:"shoes", name:"Elite Spikes",  price:420, mult:{vo2:1.16}, desc:"+16% VO₂ (eff)" },
-
-  // top (Endurance)
-  { id:"top_1", slot:"top", name:"Breathable Top", price:70,  mult:{endurance:1.06}, desc:"+6% Endurance (eff)" },
-  { id:"top_2", slot:"top", name:"Aero Singlet",    price:210, mult:{endurance:1.12}, desc:"+12% Endurance (eff)" },
-  { id:"top_3", slot:"top", name:"Pro Kit",         price:480, mult:{endurance:1.18}, desc:"+18% Endurance (eff)" },
-
-  // towel (Recovery)
-  { id:"towel_1", slot:"towel", name:"Cooling Towel", price:80,  mult:{recovery:1.08}, desc:"+8% Recovery (eff)" },
-  { id:"towel_2", slot:"towel", name:"Foam Roller",   price:240, mult:{recovery:1.15}, desc:"+15% Recovery (eff)" },
-  { id:"towel_3", slot:"towel", name:"Massage Gun",   price:520, mult:{recovery:1.22}, desc:"+22% Recovery (eff)" },
-
-  // poles (Strength)
-  { id:"poles_1", slot:"poles", name:"Grip Trainer",  price:65,  mult:{strength:1.07}, desc:"+7% Strength (eff)" },
-  { id:"poles_2", slot:"poles", name:"Hill Poles",    price:200, mult:{strength:1.13}, desc:"+13% Strength (eff)" },
-  { id:"poles_3", slot:"poles", name:"Weighted Vest", price:460, mult:{strength:1.20}, desc:"+20% Strength (eff)" },
-];
-
-const DAILY_POOL = [
-  { id:"cool_air", title:"Cool air",      text:"Run fatigue cost -12%",   eff:{ fatigueMult:{run:0.88} } },
-  { id:"headwind", title:"Headwind",      text:"Bike success -10%",       eff:{ successAdd:{bike:-0.10} } },
-  { id:"pool_open",title:"Pool open",     text:"Swim gains +15%",         eff:{ gainMult:{swim:1.15} } },
-  { id:"trail_day",title:"Trail day",     text:"Hike gains +12%",         eff:{ gainMult:{hike:1.12} } },
-  { id:"good_sleep",title:"Good sleep",   text:"Condition +0.05 today",   eff:{ conditionAdd:0.05 } },
-  { id:"stiff_body",title:"Stiff body",   text:"Condition -0.05 today",   eff:{ conditionAdd:-0.05 } },
-  { id:"recovery_focus",title:"Recovery", text:"Fatigue recovery +18%",   eff:{ fatigueRegenMult:1.18 } },
-];
-
-/** ---------------- Derived values ---------------- */
-function equippedMult(){
-  const mult = { vo2:1, endurance:1, strength:1, recovery:1 };
-  for (const slot of Object.keys(state.equipped)){
-    const id = state.equipped[slot];
-    if (!id) continue;
-    const item = SHOP_ITEMS.find(x=>x.id===id);
-    if (!item) continue;
-    for (const k of Object.keys(item.mult)){
-      mult[k] *= item.mult[k];
-    }
-  }
-  return mult;
-}
-
-function effStats(){
-  const m = equippedMult();
-  return {
-    vo2: state.vo2 * m.vo2,
-    endurance: state.endurance * m.endurance,
-    strength: state.strength * m.strength,
-    recovery: state.recovery * m.recovery,
-  };
-}
-
-function readiness(){
-  const s = effStats();
-  const vo2n = clamp((s.vo2 - 25) / 50, 0, 1); // 0..1
-  const endn = clamp(s.endurance / 100, 0, 1);
-  const strn = clamp(s.strength / 100, 0, 1);
-  const recn = clamp(s.recovery / 100, 0, 1);
-  const base = 0.40*vo2n + 0.25*endn + 0.15*strn + 0.20*recn;
-
-  // fatigue penalty scales
-  const fatPen = clamp(state.fatigue / 220, 0, 0.65);
-  const cond = clamp(state.condition, -0.20, 0.20);
-
-  const adj = clamp(base * (1 + cond) * (1 - fatPen), 0, 1);
-  return adj;
-}
-
-function fatigueMax(){ return 160; }
-
-function fatigueRegenPerSec(){
-  // base + recovery-driven; daily mods can boost
-  const s = effStats();
-  const base = 0.010;              // per sec (36 per hour) – noticeable
-  const extra = s.recovery * 0.00006; // + ~0.006 at 100
-  let mult = 1.0;
-  for (const d of state.dailyMods){
-    if (d.eff.fatigueRegenMult) mult *= d.eff.fatigueRegenMult;
-  }
-  return (base + extra) * mult;
-}
-
-function appliedDaily(trackId){
-  let gainMult = 1.0;
-  let fatMult = 1.0;
-  let successAdd = 0.0;
-  let condAdd = 0.0;
-
-  for (const d of state.dailyMods){
-    if (d.eff.gainMult && d.eff.gainMult[trackId]) gainMult *= d.eff.gainMult[trackId];
-    if (d.eff.fatigueMult && d.eff.fatigueMult[trackId]) fatMult *= d.eff.fatigueMult[trackId];
-    if (d.eff.successAdd && d.eff.successAdd[trackId]) successAdd += d.eff.successAdd[trackId];
-    if (d.eff.conditionAdd) condAdd += d.eff.conditionAdd;
-  }
-  return { gainMult, fatMult, successAdd, condAdd };
-}
-
-/** ---------------- UI ---------------- */
-const el = Object.fromEntries([
-  "money","money2",
-  "readiness","readiness2","day","nextDaily",
-  "trackFill","trackRunner","nowState","trainingETA",
-  "fatigue","fatigueBar","condition","conditionBar",
-  "vo2","endurance","strength","recovery",
-  "vo2Eff","endEff","strEff","recEff",
-  "equippedSummary",
-  "dailyMods",
-  "trainingCountdown","trainingCards",
-  "raceCards","raceResult",
-  "stopTrainingBtn","restBtn","quickCashBtn","hint","hudMoney","hudReady","hudFatigue",
-  "quickTrack","quickLevel","quickStartBtn","autoRepeatToggle","simTitle","simStatus","simFill","simOverlay","simConfetti","simAvatar","simPct","simResult",
-  "exportBtn","importBtn","resetBtn","saveBox",
-].map(id=>[id, document.getElementById(id)]).filter(([_,v])=>v));
-
-function setActiveTab(tabId){
-  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===tabId));
-  document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id===tabId));
-}
-document.querySelectorAll(".tab").forEach(btn=>{
-  btn.addEventListener("click", ()=>setActiveTab(btn.dataset.tab));
-});
-
-/** ---------------- Save/Load ---------------- */
-function save(){
-  state.lastSeen = now();
-  localStorage.setItem(SAVE_KEY, JSON.stringify(state));
-}
-function load(){
-  const raw = localStorage.getItem(SAVE_KEY);
-  if (!raw) return;
-  try{
-    const parsed = JSON.parse(raw);
-    // merge cautiously
-    Object.assign(state, parsed);
-    // backfill new keys if missing
-    state.owned ||= {};
-    state.equipped ||= { shoes:null, top:null, towel:null, poles:null };
-    state.track ||= {
-      run:{unlockedLevel:1, clears:Array(10).fill(0)},
-      bike:{unlockedLevel:1, clears:Array(10).fill(0)},
-      swim:{unlockedLevel:1, clears:Array(10).fill(0)},
-      hike:{unlockedLevel:1, clears:Array(10).fill(0)},
-    };
-    if (!Array.isArray(state.dailyMods)) state.dailyMods = [];
-  }catch(e){
-    console.warn("Failed to load save:", e);
+function renderTracks(){
+  el.tracks.innerHTML="";
+  for(const t of TRACKS){
+    const div=document.createElement("div");
+    div.className="trackCard"+(selected.trackId===t.id?" active":"");
+    const unlocked=state.unlocked[t.id]||1;
+    div.innerHTML=`<div class="trackName">${t.icon} ${t.name}</div><div class="trackMeta">Cleared: Lv${unlocked} • Focus: ${t.main.toUpperCase()}</div>`;
+    div.onclick=()=>{selected.trackId=t.id; selected.level=clamp(selected.level,1,unlocked+1); renderTracks(); renderLevels(); renderSelected();};
+    el.tracks.appendChild(div);
   }
 }
-
-function exportSave(){
-  el.saveBox.value = JSON.stringify(state);
-  el.saveBox.focus();
-  el.saveBox.select();
-}
-function importSave(){
-  const txt = el.saveBox.value.trim();
-  if (!txt) return;
-  try{
-    const parsed = JSON.parse(txt);
-    localStorage.setItem(SAVE_KEY, JSON.stringify(parsed));
-    location.reload();
-  }catch(e){
-    alert("Import failed: invalid JSON");
+function renderLevels(){
+  el.levels.innerHTML="";
+  const unlocked=state.unlocked[selected.trackId]||1;
+  for(let lv=1;lv<=10;lv++){
+    const p=trainingSuccessProb(selected.trackId,lv);
+    const dur=levelDurationMs(lv);
+    const cost=trainingCostEnergy(lv);
+    const money=baseMoneyReward(lv);
+    const locked=(lv>unlocked+1);
+    const btn=document.createElement("button");
+    btn.className="levelBtn"+(locked?" locked":"")+(lv===selected.level?" active":"");
+    btn.disabled=locked;
+    btn.innerHTML=`<div class="levelRow"><b>Lv${lv}</b><span class="pct ${pctClass(p)}">${Math.floor(p*100)}%</span></div>
+      <div class="muted small">⏱ ${msToClock(dur)} • ⚡ -${cost}</div><div class="muted small">+$${money}</div>`;
+    btn.onclick=()=>{selected.level=lv; renderLevels(); renderSelected();};
+    el.levels.appendChild(btn);
   }
 }
-function resetSave(){
-  if (!confirm("Reset all progress?")) return;
-  localStorage.removeItem(SAVE_KEY);
-  location.reload();
+function renderSelected(){
+  const t=TRACKS.find(x=>x.id===selected.trackId);
+  const p=trainingSuccessProb(selected.trackId,selected.level);
+  const dur=levelDurationMs(selected.level);
+  const cost=trainingCostEnergy(selected.level);
+  el.selectedText.textContent=`${t.icon} ${t.name} • Lv${selected.level} • ${Math.floor(p*100)}% • ⏱ ${msToClock(dur)} • ⚡ -${cost}`;
+  el.startBtn.disabled=!!state.training || state.energy<cost;
 }
-
-/** ---------------- Daily roll ---------------- */
-function rollDaily(){
-  const picks = [];
-  const pool = [...DAILY_POOL];
-  // pick 2 distinct
-  for (let i=0;i<2;i++){
-    const p = pool.splice(Math.floor(Math.random()*pool.length), 1)[0];
-    picks.push(p);
-  }
-  state.dailyMods = picks;
-  // base daily condition roll + mod add
-  let cond = (Math.random()*0.30 - 0.15); // -0.15..+0.15
-  const add = picks.reduce((a,d)=>a + (d.eff.conditionAdd || 0), 0);
-  cond = clamp(cond + add, -0.20, 0.20);
-  state.condition = cond;
-  state.nextDailyAt = now() + DAY_MS;
-  state.day = (state.day || 1) + 1;
-}
-
-function ensureDaily(){
-  if (!state.nextDailyAt) state.nextDailyAt = now() + DAY_MS;
-  if (!Array.isArray(state.dailyMods) || state.dailyMods.length === 0){
-    // init day 1 modifiers without increment day
-    state.dailyMods = [pick(DAILY_POOL), pick(DAILY_POOL.filter(x=>x.id!==state.dailyMods?.[0]?.id))];
-    let cond = (Math.random()*0.30 - 0.15);
-    const add = state.dailyMods.reduce((a,d)=>a + (d.eff.conditionAdd || 0), 0);
-    state.condition = clamp(cond + add, -0.20, 0.20);
-  }
-}
-
-/** ---------------- Training logic ---------------- */
-function trainingInProgress(){
-  return state.training && state.training.endAt > now();
-}
-
-function trainingRemainingMs(){
-  if (!state.training) return 0;
-  return state.training.endAt - now();
-}
-
-function stopTraining(){
-  if (!state.training) return;
-  state.training = null;
-  el.hint.textContent = "Training stopped.";
-  save();
-}
-
-function restBreak(){
-  // immediate fatigue drop with a small time penalty (no gating)
-  const s = effStats();
-  const drop = 10 + s.recovery * 0.06;
-  state.fatigue = clamp(state.fatigue - drop, 0, fatigueMax());
-  el.hint.textContent = `Recovery break: Fatigue -${Math.floor(drop)}.`;
-  save();
-}
-
-function startTraining(trackId, level){
-  if (trainingInProgress()){
-    el.hint.textContent = "Already training. Stop it first if you want to switch.";
-    return;
-  }
-  const info = state.track[trackId];
-  if (level > info.unlockedLevel){
-    el.hint.textContent = "Locked level. Clear previous level to unlock.";
-    return;
-  }
-  const dur = levelDurationMs(level);
-  state.training = { trackId, level, startedAt: now(), endAt: now() + dur };
-  el.hint.textContent = `Started ${trackId.toUpperCase()} Lv${level} (${msToClock(dur)})`;
-  save();
-}
-
-function resolveTrainingIfDone(){
-  if (!state.training) return false;
-  if (state.training.endAt > now()) return false;
-
-  const { trackId, level } = state.training;
-  state.training = null;
-
-  const { gainMult, fatMult, successAdd } = appliedDaily(trackId);
-
-  // success probability based on readiness vs requirement
-  const req = levelReq(level);
-  const r = readiness();
-  let p = 0.15 + (r - req) * 1.25;
-  p = clamp(p + successAdd, 0.05, 0.92);
-
-  const roll = rand01();
-  let outcome = "fail";
-  if (roll < p*0.55) outcome = "great";
-  else if (roll < p) outcome = "success";
-  else if (roll < clamp(p + 0.18, 0, 1)) outcome = "struggle";
-  else outcome = "fail";
-
-  // remember last outcome for UI
-  state.lastOutcome = { trackId, level, outcome, at: now() };
-  state.finishAnim = { kind: outcome, until: now() + 1100 };
-  if (outcome === 'success' || outcome === 'great') spawnConfetti(outcome);
-
-  // fatigue cost and rewards
-  const baseFat = (10 + level*3) * fatMult;
-  const baseMoney = levelRewardBase(level);
-
-  // growth baselines
-  const growthMain = 0.35 + level*0.08;
-  const growthAlt  = 0.18 + level*0.05;
-  const growthRec  = 0.10 + level*0.03;
-
-  const track = TRACKS.find(t=>t.id===trackId);
-
-  let moneyMul = 1.0;
-  let gainMul2 = gainMult;
-  let fatMul2  = 1.0;
-
-  if (outcome === "great"){ moneyMul = 1.25; gainMul2 *= 1.25; fatMul2 = 1.05; }
-  if (outcome === "success"){ moneyMul = 1.00; gainMul2 *= 1.00; fatMul2 = 1.00; }
-  if (outcome === "struggle"){ moneyMul = 0.70; gainMul2 *= 0.60; fatMul2 = 1.10; }
-  if (outcome === "fail"){ moneyMul = 0.25; gainMul2 *= 0.25; fatMul2 = 1.20; }
-
-  const moneyGain = Math.floor(baseMoney * moneyMul);
-  state.money += moneyGain;
-  if (state.lastOutcome) state.lastOutcome.moneyGain = moneyGain;
-
-  const addStat = (key, val) => { state[key] = clamp(state[key] + val, 0, key==="vo2" ? 75 : 100); };
-
-  addStat(track.main, growthMain * gainMul2);
-  addStat(track.alt,  growthAlt  * gainMul2);
-  addStat("recovery", growthRec  * gainMul2 * (trackId==="swim" ? 1.15 : 1.0)); // swim slightly recovery-friendly
-
-  state.fatigue = clamp(state.fatigue + baseFat * fatMul2, 0, fatigueMax());
-
-  // track clears / unlock
-  const info = state.track[trackId];
-  if (outcome === "great" || outcome === "success"){
-    info.clears[level-1] = (info.clears[level-1] || 0) + 1;
-    if (level === info.unlockedLevel && level < 10 && info.clears[level-1] >= 1){
-      info.unlockedLevel = level + 1;
-      el.hint.textContent = `${track.icon} ${track.name} Lv${level} cleared! Unlocked Lv${level+1}. +$${moneyGain}`;
-    }else{
-      el.hint.textContent = `${track.icon} ${track.name} Lv${level} ${outcome}. +$${moneyGain}`;
-    }
-  }else{
-    el.hint.textContent = `${track.icon} ${track.name} Lv${level} ${outcome}. +$${moneyGain}`;
-  }
-
-  save();
-  return true;
-}
-
-/** ---------------- Sponsor ---------------- */
-const SPONSOR_STEPS = [
-  2*60*1000,
-  5*60*1000,
-  10*60*1000,
-  30*60*1000,
-  60*60*1000,
-];
-
-function sponsorCooldownMs(){
-  return SPONSOR_STEPS[Math.min(state.sponsorStep, SPONSOR_STEPS.length-1)];
-}
-function sponsorReward(){
-  // mild reward that scales with readiness a bit
-  const r = readiness();
-  return Math.floor(25 + r*60 + state.day*0.6);
-}
-function doSponsor(){
-  const t = now();
-  if (t < (state.sponsorReadyAt || 0)){
-    el.hint.textContent = "Sponsor not ready yet.";
-    return;
-  }
-  const gain = sponsorReward();
-  state.money += gain;
-  state.sponsorStep = (state.sponsorStep || 0) + 1;
-  state.sponsorReadyAt = t + sponsorCooldownMs();
-  el.hint.textContent = `Sponsor secured: +$${gain}. Next cooldown longer.`;
-  save();
-}
-
-/** ---------------- Races ---------------- */
-const RACES = [
-  { id:"5k",  name:"5K",  icon:"🏁", km:5,    req:{vo2:26, endurance:8},  fatigue:28, prize:70 },
-  { id:"10k", name:"10K", icon:"🏁", km:10,   req:{vo2:28, endurance:12}, fatigue:40, prize:110 },
-  { id:"hm",  name:"Half Marathon", icon:"🏁", km:21.097, req:{vo2:32, endurance:22}, fatigue:58, prize:180 },
-  { id:"fm",  name:"Marathon", icon:"🏁", km:42.195, req:{vo2:36, endurance:35, recovery:18}, fatigue:78, prize:280 },
-];
-
-function canRace(race){
-  const s = effStats();
-  for (const k of Object.keys(race.req)){
-    if (s[k] < race.req[k]) return false;
-  }
-  return true;
-}
-
-function paceMinPerKm(){
-  const s = effStats();
-  // base pace: worst ~7.5, best ~3.4
-  const vo2Boost = (s.vo2 - 25) / 12; // ~0..4.2
-  const endBoost = s.endurance / 55;  // ~0..1.8
-  let pace = 7.6 - vo2Boost - endBoost;
-
-  // fatigue + condition
-  pace *= (1 + clamp(state.fatigue/240, 0, 0.55));
-  pace *= (1 - clamp(state.condition, -0.2, 0.2)*0.25);
-
-  return clamp(pace, 3.2, 9.0);
-}
-
-function startRace(raceId){
-  if (trainingInProgress()){
-    el.raceResult.textContent = "Stop training before racing.";
-    return;
-  }
-  const race = RACES.find(r=>r.id===raceId);
-  if (!race) return;
-
-  if (!canRace(race)){
-    el.raceResult.textContent = "Not ready: meet minimum stat requirements first.";
-    return;
-  }
-
-  const r = readiness();
-  const p = clamp(0.35 + (r - 0.45) * 1.6, 0.10, 0.95); // chance of strong result
-  const roll = rand01();
-
-  // time estimation
-  const pace = paceMinPerKm();
-  let timeMin = pace * race.km;
-
-  // performance noise
-  const perf = (roll < p ? 1 - rand01()*0.04 : 1 + rand01()*0.08);
-  timeMin *= perf;
-
-  // rank by time thresholds relative to a "par" time from readiness
-  const par = (8.6 - r*4.5) * race.km; // lower is better
-  const ratio = timeMin / par;
-
-  let grade = "C";
-  if (ratio < 0.88) grade = "S";
-  else if (ratio < 0.96) grade = "A";
-  else if (ratio < 1.04) grade = "B";
-  else if (ratio < 1.12) grade = "C";
-  else grade = "D";
-
-  // prize scaling
-  const prizeMul = ({S:1.35,A:1.20,B:1.05,C:0.85,D:0.60})[grade];
-  const moneyGain = Math.floor(race.prize * prizeMul);
-  state.money += moneyGain;
-
-  // fatigue hit big
-  state.fatigue = clamp(state.fatigue + race.fatigue, 0, fatigueMax());
-
-  // small stat gains
-  const add = (k,v)=> state[k] = clamp(state[k]+v, 0, k==="vo2"?75:100);
-  add("vo2", 0.12 + race.km*0.006);
-  add("endurance", 0.18 + race.km*0.010);
-  add("recovery", 0.10 + race.km*0.004);
-
-  const hh = Math.floor(timeMin/60);
-  const mm = Math.floor(timeMin%60);
-  const timeStr = hh>0 ? `${hh}h ${mm}m` : `${mm}m ${Math.round((timeMin-mm)*60)}s`;
-
-  el.raceResult.textContent =
-    `${race.name} result: Grade ${grade}. Time ~ ${timeStr}. +$${moneyGain}. Fatigue +${race.fatigue}.`;
-
-  save();
-}
-
-/** ---------------- Shop ---------------- */
-function buyItem(itemId){
-  const item = SHOP_ITEMS.find(x=>x.id===itemId);
-  if (!item) return;
-  if (state.owned[itemId]){
-    el.hint.textContent = "Already owned.";
-    return;
-  }
-  if (state.money < item.price){
-    el.hint.textContent = "Not enough money.";
-    return;
-  }
-  state.money -= item.price;
-  state.owned[itemId] = true;
-  el.hint.textContent = `Bought: ${item.name}.`;
-  save();
-}
-function equipItem(itemId){
-  const item = SHOP_ITEMS.find(x=>x.id===itemId);
-  if (!item) return;
-  if (!state.owned[itemId]){
-    el.hint.textContent = "Buy it first.";
-    return;
-  }
-  state.equipped[item.slot] = itemId;
-  el.hint.textContent = `Equipped: ${item.name}.`;
-  save();
-}
-function unequip(slot){
-  state.equipped[slot] = null;
-  el.hint.textContent = `Unequipped ${slot}.`;
-  save();
-}
-
-/** ---------------- Offline progress ---------------- */
-function offlineProgress(){
-  const t = now();
-  const dt = clamp(t - (state.lastSeen || t), 0, OFFLINE_CAP_MS);
-  if (dt <= 0) return;
-
-  // fatigue recovery during offline
-  const dec = fatigueRegenPerSec() * (dt/1000);
-  state.fatigue = clamp(state.fatigue - dec, 0, fatigueMax());
-
-  // if training finished while offline, resolve once
-  if (state.training && state.training.endAt <= t){
-    resolveTrainingIfDone(); // uses current now; ok
-  }
-
-  state.lastSeen = t;
-}
-
-/** ---------------- Rendering ---------------- */
-function tagForProb(p){
-  if (p >= 0.75) return { cls:"good", text:`High ${Math.round(p*100)}%` };
-  if (p >= 0.45) return { cls:"mid",  text:`Mid ${Math.round(p*100)}%` };
-  return { cls:"bad", text:`Low ${Math.round(p*100)}%` };
-}
-
-function trainingPreview(trackId, level){
-  const p = trainingProb(trackId, level);
-  const dur = levelDurationMs(level);
-  const baseMoney = levelRewardBase(level);
-  // expected multipliers by outcome distribution (approx)
-  const pGreat = clamp(p*0.25, 0.03, 0.20);
-  const pSuccess = clamp(p - pGreat, 0.02, 0.92);
-  const pFail = 1 - p;
-  // ignore struggle split for preview simplicity
-  const moneyExp = baseMoney * (pGreat*1.25 + pSuccess*1.00 + pFail*0.25);
-  const fatBase = (10 + level*6) * appliedDaily(trackId).fatMult;
-  const fatExp = fatBase * (pGreat*1.05 + pSuccess*1.00 + pFail*1.20);
-  return { p, dur, moneyExp, fatExp };
-}
-
-function trainingProb(trackId, level){
-
-  const req = levelReq(level);
-  const { successAdd } = appliedDaily(trackId);
-  const r = readiness();
-  let p = 0.15 + (r - req) * 1.25;
-  p = clamp(p + successAdd, 0.05, 0.92);
-  return p;
-}
-
-function renderDaily(){
-  el.dailyMods.innerHTML = "";
-  for (const d of state.dailyMods){
-    const li = document.createElement("li");
-    li.className = "modItem";
-    li.innerHTML = `<b>${d.title}</b><div class="muted">${d.text}</div>`;
-    el.dailyMods.appendChild(li);
-  }
-  el.nextDaily.textContent = msToClock(state.nextDailyAt - now());
-}
-
-function renderStats(){
-  const s = effStats();
-  el.money.textContent = Math.floor(state.money);
-  if (el.money2) el.money2.textContent = Math.floor(state.money);
-
-  el.day.textContent = state.day;
-
-  el.vo2.textContent = fmt1(state.vo2);
-  el.endurance.textContent = fmt1(state.endurance);
-  el.strength.textContent = fmt1(state.strength);
-  el.recovery.textContent = fmt1(state.recovery);
-
-  el.vo2Eff.textContent = fmt1(s.vo2);
-  el.endEff.textContent = fmt1(s.endurance);
-  el.strEff.textContent = fmt1(s.strength);
-  el.recEff.textContent = fmt1(s.recovery);
-
-  el.readiness.textContent = fmt2(readiness());
-  if (el.readiness2) el.readiness2.textContent = fmt2(readiness());
-
-  el.fatigue.textContent = Math.floor(state.fatigue);
-  const fatPct = clamp(state.fatigue / fatigueMax(), 0, 1) * 100;
-  el.fatigueBar.style.width = `${fatPct}%`;
-
-  // condition displayed as -15..+15
-  const condPct = clamp((state.condition + 0.20) / 0.40, 0, 1) * 100;
-  el.condition.textContent = fmt2(state.condition);
-  el.conditionBar.style.width = `${condPct}%`;
-
-  // equipped summary
-  const sum = [];
-  for (const slot of ["shoes","top","towel","poles"]){
-    const id = state.equipped[slot];
-    if (!id) continue;
-    const item = SHOP_ITEMS.find(x=>x.id===id);
-    if (item) sum.push(item.name);
-  }
-  el.equippedSummary.textContent = sum.length ? sum.join(" • ") : "—";
-}
-
-function renderTrack(){
-  const runner = el.trackRunner;
-  const fill = el.trackFill;
-
-  if (state.training){
-    const total = state.training.endAt - state.training.startedAt;
-    const done = clamp((now() - state.training.startedAt) / total, 0, 1);
-    const pct = done * 100;
-    fill.style.width = `${pct}%`;
-    runner.style.left = `calc(${pct}% - 6px)`;
-    runner.classList.toggle("running", true);
-
-    const track = TRACKS.find(t=>t.id===state.training.trackId);
-    el.nowState.textContent = `${track.icon} ${track.name} Lv${state.training.level}`;
-    el.trainingETA.textContent = msToClock(trainingRemainingMs());
-  }else{
-    fill.style.width = "0%";
-    runner.style.left = "0%";
-    runner.classList.toggle("running", false);
-    el.nowState.textContent = "Idle";
-    el.trainingETA.textContent = "—";
-  }
-}
-
-function renderTraining(){
-  const remaining = trainingRemainingMs();
-  el.trainingCountdown.textContent = state.training ? msToClock(remaining) : "—";
-
-  el.trainingCards.innerHTML = "";
-  for (const t of TRACKS){
-    const info = state.track[t.id];
-    const card = document.createElement("div");
-    card.className = "trainCard";
-
-    const lockedNote = `Unlocked: Lv${info.unlockedLevel}/10`;
-    card.innerHTML = `
-      <div class="trainTop">
-        <div>
-          <div class="trainName">${t.icon} ${t.name}</div>
-          <div class="small">${lockedNote}</div>
-        </div>
-      </div>
-      <div class="trainMeta">
-        <div><span class="muted">Main</span><div><b>${t.main}</b></div></div>
-        <div><span class="muted">Alt</span><div><b>${t.alt}</b></div></div>
-      </div>
-      <div class="divider"></div>
-      <div class="trainActions" id="btns_${t.id}"></div>
-    `;
-    el.trainingCards.appendChild(card);
-
-    const btns = card.querySelector(`#btns_${t.id}`);
-    for (let lv=1; lv<=10; lv++){
-      const b = document.createElement("button");
-      b.className = "btn";
-      b.textContent = `Lv${lv}`;
-      const locked = lv > info.unlockedLevel;
-      if (locked) b.disabled = true;
-
-      // add a tag-like title for probability
-      const p = trainingProb(t.id, lv);
-      const tag = tagForProb(p);
-      b.title = `Chance ${Math.round(p*100)}% • Dur ${msToClock(levelDurationMs(lv))}`;
-
-      b.addEventListener("click", ()=>startTraining(t.id, lv));
-      btns.appendChild(b);
-    }
-
-    // add summary line
-    const sum = document.createElement("div");
-    sum.className = "small";
-    sum.style.marginTop = "10px";
-    const lastClear = info.clears.map((c,i)=>c>0?`Lv${i+1}✓`:null).filter(Boolean).slice(-3).join(" ");
-    sum.innerHTML = `<span class="muted">Clears:</span> ${lastClear || "—"}`;
-    card.appendChild(sum);
-  }
-}
-
-function renderRaces(){
-  el.raceCards.innerHTML = "";
-  for (const r of RACES){
-    const card = document.createElement("div");
-    card.className = "raceCard";
-
-    const ok = canRace(r);
-    const reqLines = Object.entries(r.req).map(([k,v])=>`${k} ≥ ${v}`).join(", ");
-
-    card.innerHTML = `
-      <div class="raceTitle">
-        <div class="raceName">${r.icon} ${r.name}</div>
-        <span class="tag ${ok ? "good":"bad"}">${ok ? "Eligible":"Locked"}</span>
-      </div>
-      <div class="raceMeta">
-        <div><span class="muted">Distance</span><div><b>${fmt1(r.km)} km</b></div></div>
-        <div><span class="muted">Prize</span><div><b>$${r.prize}</b></div></div>
-        <div><span class="muted">Req</span><div><b>${reqLines}</b></div></div>
-        <div><span class="muted">Fatigue</span><div><b>+${r.fatigue}</b></div></div>
-      </div>
-      <div class="raceActions">
-        <button class="btn primary" id="race_${r.id}">Race</button>
-      </div>
-    `;
-    el.raceCards.appendChild(card);
-    const btn = card.querySelector(`#race_${r.id}`);
-    btn.disabled = !ok || trainingInProgress();
-    btn.addEventListener("click", ()=>startRace(r.id));
-  }
-}
-
 function renderShop(){
-  el.shopGrid.innerHTML = "";
-  for (const item of SHOP_ITEMS){
-    const card = document.createElement("div");
-    card.className = "shopItem";
-
-    const owned = !!state.owned[item.id];
-    const equipped = state.equipped[item.slot] === item.id;
-
-    card.innerHTML = `
-      <div class="shopTop">
-        <div>
-          <div class="shopName">${item.name}</div>
-          <div class="small">${item.slot.toUpperCase()} • $${item.price}</div>
-        </div>
-        <span class="tag ${equipped ? "good" : owned ? "mid" : ""}">${equipped ? "Equipped" : owned ? "Owned" : "—"}</span>
-      </div>
-      <div class="shopDesc">${item.desc}</div>
-      <div class="shopActions">
-        <button class="btn secondary" id="buy_${item.id}">Buy</button>
-        <button class="btn primary" id="eq_${item.id}">Equip</button>
-      </div>
-    `;
+  const items=[
+    {id:"shoes",name:"Shoes",icon:"👟",desc:"Cheaper training energy cost.",base:40,growth:1.45,max:10},
+    {id:"towel",name:"Towel",icon:"🧻",desc:"Faster energy recovery.",base:35,growth:1.40,max:10},
+    {id:"goggles",name:"Goggles",icon:"🥽",desc:"Boost race stability.",base:55,growth:1.55,max:10},
+    {id:"windbreaker",name:"Windbreaker",icon:"🧥",desc:"Small overall bonus.",base:60,growth:1.55,max:10},
+  ];
+  el.shopGrid.innerHTML="";
+  for(const it of items){
+    const level=state.gear[it.id]||0;
+    const price=Math.floor(it.base*Math.pow(it.growth,level));
+    const canBuy=state.money>=price && level<it.max;
+    const card=document.createElement("div");
+    card.className="shopItem";
+    card.innerHTML=`<div class="shopTop"><div class="shopName">${it.icon} ${it.name} <span class="muted small">Lv${level}</span></div><div class="muted"><b>$${price}</b></div></div>
+      <div class="shopDesc">${it.desc}</div>
+      <div class="shopBottom"><button class="btn ${canBuy?"primary":""}" ${canBuy?"":"disabled"}>Buy</button><span class="muted small">${level>=it.max?"Maxed":""}</span></div>`;
+    card.querySelector("button").onclick=()=>{if(!canBuy) return; state.money-=price; state.gear[it.id]=level+1; state.fitness=computeFitness(); save(); renderAll(); toast(`Bought ${it.name} Lv${state.gear[it.id]}`);};
     el.shopGrid.appendChild(card);
-
-    const buyBtn = card.querySelector(`#buy_${item.id}`);
-    const eqBtn  = card.querySelector(`#eq_${item.id}`);
-    buyBtn.disabled = owned || state.money < item.price;
-    eqBtn.disabled = !owned || equipped;
-
-    buyBtn.addEventListener("click", ()=>buyItem(item.id));
-    eqBtn.addEventListener("click", ()=>equipItem(item.id));
   }
-
-  // quick unequip row
-  const extra = document.createElement("div");
-  extra.className = "shopItem";
-  extra.innerHTML = `
-    <div class="shopTop">
-      <div>
-        <div class="shopName">Unequip</div>
-        <div class="small">Remove equipment</div>
-      </div>
-    </div>
-    <div class="shopActions">
-      <button class="btn secondary" id="un_shoes">Shoes</button>
-      <button class="btn secondary" id="un_top">Top</button>
-      <button class="btn secondary" id="un_towel">Towel</button>
-      <button class="btn secondary" id="un_poles">Poles</button>
-    </div>
-  `;
-  el.shopGrid.appendChild(extra);
-  extra.querySelector("#un_shoes").onclick = ()=>unequip("shoes");
-  extra.querySelector("#un_top").onclick = ()=>unequip("top");
-  extra.querySelector("#un_towel").onclick = ()=>unequip("towel");
-  extra.querySelector("#un_poles").onclick = ()=>unequip("poles");
+}
+function renderDebug(){
+  el.debug.textContent=JSON.stringify({
+    vo2:+state.vo2.toFixed(2),endurance:+state.endurance.toFixed(2),strength:+state.strength.toFixed(2),
+    recovery:+state.recovery.toFixed(2),technique:+state.technique.toFixed(2),
+    unlocked:state.unlocked,gear:state.gear
+  },null,2);
 }
 
-function renderSponsor(){
-  const t = now();
-  const readyAt = state.sponsorReadyAt || 0;
-  const disabled = t < readyAt;
-  el.quickCashBtn.disabled = disabled;
-  if (disabled){
-    el.quickCashBtn.textContent = `Get Sponsor (${msToClock(readyAt - t)})`;
+function setOverlay(text,kind){
+  el.stageOverlay.classList.remove("hidden");
+  el.stageOverlay.classList.add("show");
+  el.stageOverlay.textContent=text;
+  el.stageOverlay.style.color=kind==="good"?"rgba(34,197,94,.95)":kind==="warn"?"rgba(251,191,36,.98)":"rgba(248,113,113,.98)";
+  state.overlayUntil=now()+900;
+}
+function spawnConfetti(){
+  el.confetti.innerHTML="";
+  const colors=["#60a5fa","#34d399","#fbbf24","#a78bfa","#fb7185"];
+  for(let i=0;i<14;i++){
+    const d=document.createElement("div");
+    d.className="confettiPiece";
+    d.style.left=`${Math.floor(rand01()*96)+2}%`;
+    d.style.animationDelay=`${Math.floor(rand01()*180)}ms`;
+    d.style.background=colors[i%colors.length];
+    el.confetti.appendChild(d);
+  }
+}
+function renderStage(){
+  let pct=0;
+  if(state.training){
+    pct=clamp((now()-state.training.startedAt)/(state.training.endAt-state.training.startedAt),0,1);
+  }
+  el.trackFill.style.width=`${Math.floor(pct*100)}%`;
+  el.stagePct.textContent=`${Math.floor(pct*100)}%`;
+  const leftPct=state.training?(pct*92):6;
+  el.runner.style.left=`calc(${leftPct}% - 8px)`;
+  el.runner.classList.toggle("run",!!state.training);
+  el.runner.classList.toggle("good",state.formIdx>=2);
+  el.runner.classList.toggle("bad",state.formIdx<=0);
+
+  if(!state.training){el.stageMode.textContent="Idle"; el.stageNow.textContent="Pick a training below.";}
+  else if(state.training.kind==="training"){
+    const t=TRACKS.find(x=>x.id===state.training.id);
+    el.stageMode.textContent=`${t.icon} Training`;
+    el.stageNow.textContent=`${t.name} Lv${state.training.level}`;
   }else{
-    el.quickCashBtn.textContent = "Get Sponsor";
-  }
-}
-
-function renderQuickStart(){
-  if (!el.quickTrack || !el.quickLevel || !el.quickStartBtn) return;
-
-  // populate track options
-  el.quickTrack.innerHTML = "";
-  for (const t of TRACKS){
-    const opt = document.createElement("option");
-    opt.value = t.id;
-    opt.textContent = `${t.icon} ${t.name}`;
-    el.quickTrack.appendChild(opt);
+    el.stageMode.textContent="🏁 Race";
+    el.stageNow.textContent=RACES[state.training.id].name;
   }
 
-  const selected = el.quickTrack.value || "run";
-  const info = state.track[selected];
-  const maxLv = info ? info.unlockedLevel : 1;
-
-  const prev = parseInt(el.quickLevel.value || "1", 10);
-  const curLv = Math.min(prev, maxLv);
-
-  el.quickLevel.innerHTML = "";
-  for (let lv=1; lv<=maxLv; lv++){
-    const opt = document.createElement("option");
-    opt.value = String(lv);
-    opt.textContent = `Lv${lv}`;
-    if (lv === curLv) opt.selected = true;
-    el.quickLevel.appendChild(opt);
-  }
-
-  el.quickStartBtn.disabled = trainingInProgress();
-}
-
-function avatarForTrack(trackId){
-  return ({run:"🏃", bike:"🚴", swim:"🏊", hike:"⛰️"})[trackId] || "🏃";
-}
-
-function spawnConfetti(kind){
-  if (!el.simConfetti) return;
-  el.simConfetti.innerHTML = "";
-  const n = (kind === "great") ? 16 : 10;
-  const colors = ["#60a5fa","#34d399","#fbbf24","#a78bfa","#fb7185"];
-  for (let i=0;i<n;i++){
-    const d = document.createElement("div");
-    d.className = "confetti";
-    d.style.left = `${Math.floor(rand01()*96)+2}%`;
-    d.style.animationDelay = `${Math.floor(rand01()*180)}ms`;
-    d.style.background = colors[i % colors.length];
-    d.style.transform = `translateY(0) rotate(${Math.floor(rand01()*90)}deg)`;
-    el.simConfetti.appendChild(d);
+  if(state.overlayUntil && now()>state.overlayUntil){
+    el.stageOverlay.classList.remove("show"); el.stageOverlay.classList.add("hidden");
+    el.confetti.innerHTML=""; state.overlayUntil=0;
   }
 }
-
-function renderSimulator(){
-
-  if (!el.simFill || !el.simAvatar || !el.simStatus || !el.simPct || !el.simResult) return;
-
-  if (state.training){
-    const total = state.training.endAt - state.training.startedAt;
-    const done = clamp((now() - state.training.startedAt) / total, 0, 1);
-    const pct = Math.floor(done * 100);
-
-    el.simFill.style.width = `${pct}%`;
-    el.simAvatar.style.left = `calc(${pct}% - 6px)`;
-    el.simAvatar.textContent = avatarForTrack(state.training.trackId);
-    el.simAvatar.classList.toggle("running", true);
-
-    el.simStatus.textContent = `Running Lv${state.training.level}`;
-    el.simPct.textContent = `${pct}%`;
-    el.simResult.textContent = "—";
-  }else{
-    el.simFill.style.width = "0%";
-    el.simAvatar.style.left = "0%";
-    el.simAvatar.classList.toggle("running", false);
-    el.simStatus.textContent = "Idle";
-    el.simPct.textContent = "0%";
-
-    if (state.lastOutcome){
-      const track = TRACKS.find(t=>t.id===state.lastOutcome.trackId);
-      const icon = track ? track.icon : "✅";
-      const label = ({great:"SUCCESS+", success:"SUCCESS", struggle:"BARELY", fail:"FAIL"})[state.lastOutcome.outcome] || state.lastOutcome.outcome;
-      const money = (typeof state.lastOutcome.moneyGain === "number") ? ` (+$${state.lastOutcome.moneyGain})` : "";
-      el.simResult.textContent = `${icon} ${label} • ${track?.name || state.lastOutcome.trackId} Lv${state.lastOutcome.level}${money}`;
-      el.simAvatar.textContent = avatarForTrack(state.lastOutcome.trackId);
-    }else{
-      el.simResult.textContent = "Pick a course and start.";
-      el.simAvatar.textContent = "🏃";
-    }
-  }
-}
-
 function renderHUD(){
-  const m = document.getElementById("hudMoney");
-  const r = document.getElementById("hudReady");
-  const f = document.getElementById("hudFatigue");
-  if (m) m.textContent = fmt0(state.money);
-  if (r) r.textContent = `${Math.floor(readiness()*100)}%`;
-  if (f) f.textContent = fmt0(state.fatigue);
+  updateForm();
+  state.fitness=computeFitness();
+  const e=clamp(state.energy,0,state.energyMax);
+  el.energyText.textContent=fmt0(e);
+  el.energyBar.style.width=`${Math.floor((e/state.energyMax)*100)}%`;
+  el.moneyText.textContent=fmt0(state.money);
+  el.fitnessText.textContent=fmt0(state.fitness);
+  el.formText.textContent=FORM[state.formIdx].emoji;
+}
+
+function startTraining(trackId,lv){
+  const cost=trainingCostEnergy(lv);
+  if(state.training || state.energy<cost) return;
+  state.energy-=cost;
+  updateForm();
+  state.training={kind:"training",id:trackId,level:lv,startedAt:now(),endAt:now()+levelDurationMs(lv)};
+  save(); renderAll();
+}
+function resolveTraining(){
+  if(!state.training || state.training.kind!=="training") return false;
+  if(now()<state.training.endAt) return false;
+  const trackId=state.training.id,lv=state.training.level;
+  const p=trainingSuccessProb(trackId,lv);
+  const roll=rand01();
+  let outcome="fail";
+  if(roll<p*.18) outcome="great";
+  else if(roll<p) outcome="success";
+  else if(roll<clamp(p+.10,0,.98)) outcome="struggle";
+  const t=TRACKS.find(x=>x.id===trackId);
+  const moneyGain=Math.floor(baseMoneyReward(lv)* (outcome==="great"?1.25:outcome==="success"?1.0:outcome==="struggle"?0.65:0.25));
+  state.money+=moneyGain;
+  const gainBase=.55+lv*.22;
+  const gainMul=outcome==="great"?1.25:outcome==="success"?1.0:outcome==="struggle"?0.70:0.35;
+  state[t.main]+=gainBase*1.00*gainMul;
+  state[t.alt]+=gainBase*0.55*gainMul;
+
+  if(outcome!=="fail"){
+    const cleared=state.unlocked[trackId]||1;
+    if(lv===cleared+1) state.unlocked[trackId]=cleared+1;
+  }
+  state.fitness=computeFitness();
+
+  if(outcome==="great"||outcome==="success"){setOverlay("SUCCESS", "good"); spawnConfetti();}
+  else if(outcome==="struggle"){setOverlay("BARELY","warn");}
+  else setOverlay("FAIL","bad");
+
+  state.training=null;
+
+  if(state.autoRepeat){
+    const nextLv=Math.min(lv,(state.unlocked[trackId]||1)+1);
+    if(state.energy>=trainingCostEnergy(nextLv)) startTraining(trackId,nextLv);
+    else toast("Too tired. Rest or buy recovery gear.");
+  }
+  save(); renderAll(); return true;
+}
+
+function raceDurationMs(raceId){const km=RACES[raceId].km; return Math.floor((14+km*2.2)*1000);}
+function canRace(){return !state.training && state.energy>=18;}
+function startRace(raceId){
+  if(!canRace()) return;
+  state.energy-=18; updateForm();
+  state.training={kind:"race",id:raceId,level:1,startedAt:now(),endAt:now()+raceDurationMs(raceId)};
+  save(); renderAll();
+}
+function resolveRace(){
+  if(!state.training || state.training.kind!=="race") return false;
+  if(now()<state.training.endAt) return false;
+  const raceId=state.training.id; const r=RACES[raceId];
+  const form=FORM[state.formIdx].mult;
+  const enduranceBias=(r.focus==="endurance")?1.0:0.55;
+  const score=(state.fitness*.90+state.vo2*.8+state.endurance*.9*enduranceBias+state.technique*.25)*form;
+  const field=2500+r.km*80;
+  const rank=clamp(Math.floor(field-score*6.2+rand01()*120),1,field);
+  const placePct=1-(rank/field);
+  const prize=Math.max(10,Math.floor(25+placePct*140+r.km*2));
+  state.money+=prize;
+  state.technique+=0.4+placePct*0.8;
+  state.fitness=computeFitness();
+  const text=(rank<=field*.06)?"PODIUM!":(rank<=field*.25)?"GREAT!":(rank<=field*.60)?"FINISH":"SURVIVED";
+  setOverlay(text, rank<=field*.25?"good":rank<=field*.60?"warn":"bad");
+  if(rank<=field*.25) spawnConfetti();
+  state.training=null;
+  el.raceResult.textContent=`${r.name}: Rank #${rank} / ${field} • Prize +$${prize}`;
+  save(); renderAll(); return true;
+}
+
+function renderRace(){
+  for(const c of el.raceCards) c.classList.toggle("active",c.dataset.race===selectedRace);
+  el.raceBtn.disabled=!canRace();
+}
+
+let toastTimer=null;
+function toast(msg){
+  el.hint.textContent=msg;
+  if(toastTimer) clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{el.hint.textContent="Tip: Clear higher levels for faster growth and better races.";},2600);
 }
 
 function renderAll(){
-
-
-  renderStats();
-  renderDaily();
-  renderTrack();
-  renderTraining();
-  renderRaces();
-  renderShop();
-  renderHUD();
-  renderSponsor();
-  renderQuickStart();
-  renderSimulator();
-
-  // buttons
-  el.stopTrainingBtn.disabled = !state.training;
+  renderHUD(); renderStage();
+  renderTracks(); renderLevels(); renderSelected();
+  renderShop(); renderRace(); renderDebug();
 }
 
-/** ---------------- Main loop ---------------- */
-let last = performance.now();
+let last=performance.now();
 function tick(ts){
-  const dt = clamp((ts - last)/1000, 0, 0.25);
-  last = ts;
-
-  // fatigue recovery over time
-  state.fatigue = clamp(state.fatigue - fatigueRegenPerSec()*dt, 0, fatigueMax());
-
-  // daily rollover
-  if (now() >= state.nextDailyAt){
-    rollDaily();
-    el.hint.textContent = `New day rolled. Condition is now ${fmt2(state.condition)}.`;
-  }
-
-  // training resolution
-  resolveTrainingIfDone();
-
-  renderAll();
+  const dt=clamp((ts-last)/1000,0,0.25); last=ts;
+  const regen=energyRegenPerSec();
+  state.energy=clamp(state.energy+regen*(state.training?.kind?0.18:1.0)*dt,0,state.energyMax);
+  resolveTraining(); resolveRace();
+  renderHUD(); renderStage();
   requestAnimationFrame(tick);
 }
 
+// bindings
+for(const b of el.tabs) b.onclick=()=>tabTo(b.dataset.tab);
+el.autoRepeatToggle.onchange=()=>{state.autoRepeat=!!el.autoRepeatToggle.checked; save();};
+el.startBtn.onclick=()=>startTraining(selected.trackId,selected.level);
 
-function firstRunBootstrap(){
-  // if this is a brand-new save, start with a gentle default loop so the game feels alive
-  const raw = localStorage.getItem(SAVE_KEY);
-  if (raw) return;
-  state.money = 20;
-  state.vo2 = 25;
-  state.endurance = 8;
-  state.strength = 6;
-  state.recovery = 8;
-  state.fatigue = 12;
-  state.autoRepeat = true;
-  state.lastTrainingPick = { trackId: "run", level: 1 };
-  ensureDaily();
-  startTraining("run", 1);
-  save();
+for(const c of el.raceCards){
+  c.onclick=()=>{selectedRace=c.dataset.race; renderRace(); el.raceResult.textContent=`Selected: ${RACES[selectedRace].name}`;};
 }
+el.raceBtn.onclick=()=>startRace(selectedRace);
 
+el.exportBtn.onclick=()=>{
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download="training-idle-save.json"; a.click();
+  URL.revokeObjectURL(url);
+};
+el.importBtn.onclick=()=>{
+  const input=document.createElement("input"); input.type="file"; input.accept="application/json";
+  input.onchange=async()=>{const file=input.files?.[0]; if(!file) return;
+    try{const txt=await file.text(); Object.assign(state,JSON.parse(txt)); save(); renderAll(); toast("Imported save.");}
+    catch{toast("Import failed.");}
+  };
+  input.click();
+};
+el.resetBtn.onclick=()=>{if(!confirm("Reset your save?")) return; localStorage.removeItem(SAVE_KEY); location.reload();};
 
-/** ---------------- Init & bindings ---------------- */
-
-load();
-firstRunBootstrap();
-ensureDaily();
+// init
+const hasSave=load();
 offlineProgress();
+state.fitness=computeFitness(); updateForm();
+el.autoRepeatToggle.checked=!!state.autoRepeat;
 
-// default: own first-tier items? (starter pack) – cheap, optional
-// state.owned["shoes_1"] = true;
-
-el.stopTrainingBtn.onclick = stopTraining;
-el.restBtn.onclick = restBreak;
-el.quickCashBtn.onclick = doSponsor;
-
-el.exportBtn.onclick = exportSave;
-el.importBtn.onclick = importSave;
-el.resetBtn.onclick = resetSave;
-
-setInterval(save, 10000);
-window.addEventListener("beforeunload", save);
-
+if(!hasSave){
+  state.money=20; state.energy=75;
+  state.vo2=25; state.endurance=8; state.strength=6; state.recovery=8; state.technique=5;
+  state.fitness=computeFitness(); updateForm(); save();
+}
 renderAll();
 requestAnimationFrame(tick);
-
-// debug helpers
-window.resetGame = resetSave;
-window.state = state;
