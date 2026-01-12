@@ -60,6 +60,8 @@ const state = {
 
   training: null, // {trackId, level, startedAt, endAt}
 
+  lastOutcome: null, // {trackId, level, outcome, moneyGain}
+
   // shop
   owned: {}, // itemId: true
   equipped: { shoes:null, top:null, towel:null, poles:null },
@@ -210,6 +212,7 @@ const el = Object.fromEntries([
   "trainingCountdown","trainingCards",
   "raceCards","raceResult",
   "stopTrainingBtn","restBtn","quickCashBtn","hint",
+  "quickTrack","quickLevel","quickStartBtn","simTitle","simStatus","simFill","simAvatar","simPct","simResult",
   "exportBtn","importBtn","resetBtn","saveBox",
 ].map(id=>[id, document.getElementById(id)]).filter(([_,v])=>v));
 
@@ -364,6 +367,9 @@ function resolveTrainingIfDone(){
   else if (roll < clamp(p + 0.18, 0, 1)) outcome = "struggle";
   else outcome = "fail";
 
+  // remember last outcome for UI
+  state.lastOutcome = { trackId, level, outcome, at: now() };
+
   // fatigue cost and rewards
   const baseFat = (10 + level*3) * fatMult;
   const baseMoney = levelRewardBase(level);
@@ -386,6 +392,7 @@ function resolveTrainingIfDone(){
 
   const moneyGain = Math.floor(baseMoney * moneyMul);
   state.money += moneyGain;
+  if (state.lastOutcome) state.lastOutcome.moneyGain = moneyGain;
 
   const addStat = (key, val) => { state[key] = clamp(state[key] + val, 0, key==="vo2" ? 75 : 100); };
 
@@ -832,7 +839,80 @@ function renderSponsor(){
   }
 }
 
+function renderQuickStart(){
+  if (!el.quickTrack || !el.quickLevel || !el.quickStartBtn) return;
+
+  // populate track options
+  el.quickTrack.innerHTML = "";
+  for (const t of TRACKS){
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = `${t.icon} ${t.name}`;
+    el.quickTrack.appendChild(opt);
+  }
+
+  const selected = el.quickTrack.value || "run";
+  const info = state.track[selected];
+  const maxLv = info ? info.unlockedLevel : 1;
+
+  const prev = parseInt(el.quickLevel.value || "1", 10);
+  const curLv = Math.min(prev, maxLv);
+
+  el.quickLevel.innerHTML = "";
+  for (let lv=1; lv<=maxLv; lv++){
+    const opt = document.createElement("option");
+    opt.value = String(lv);
+    opt.textContent = `Lv${lv}`;
+    if (lv === curLv) opt.selected = true;
+    el.quickLevel.appendChild(opt);
+  }
+
+  el.quickStartBtn.disabled = trainingInProgress();
+}
+
+function avatarForTrack(trackId){
+  return ({run:"🏃", bike:"🚴", swim:"🏊", hike:"⛰️"})[trackId] || "🏃";
+}
+
+function renderSimulator(){
+  if (!el.simFill || !el.simAvatar || !el.simStatus || !el.simPct || !el.simResult) return;
+
+  if (state.training){
+    const total = state.training.endAt - state.training.startedAt;
+    const done = clamp((now() - state.training.startedAt) / total, 0, 1);
+    const pct = Math.floor(done * 100);
+
+    el.simFill.style.width = `${pct}%`;
+    el.simAvatar.style.left = `calc(${pct}% - 6px)`;
+    el.simAvatar.textContent = avatarForTrack(state.training.trackId);
+    el.simAvatar.classList.toggle("running", true);
+
+    el.simStatus.textContent = `Running Lv${state.training.level}`;
+    el.simPct.textContent = `${pct}%`;
+    el.simResult.textContent = "—";
+  }else{
+    el.simFill.style.width = "0%";
+    el.simAvatar.style.left = "0%";
+    el.simAvatar.classList.toggle("running", false);
+    el.simStatus.textContent = "Idle";
+    el.simPct.textContent = "0%";
+
+    if (state.lastOutcome){
+      const track = TRACKS.find(t=>t.id===state.lastOutcome.trackId);
+      const icon = track ? track.icon : "✅";
+      const label = ({great:"SUCCESS+", success:"SUCCESS", struggle:"BARELY", fail:"FAIL"})[state.lastOutcome.outcome] || state.lastOutcome.outcome;
+      const money = (typeof state.lastOutcome.moneyGain === "number") ? ` (+$${state.lastOutcome.moneyGain})` : "";
+      el.simResult.textContent = `${icon} ${label} • ${track?.name || state.lastOutcome.trackId} Lv${state.lastOutcome.level}${money}`;
+      el.simAvatar.textContent = avatarForTrack(state.lastOutcome.trackId);
+    }else{
+      el.simResult.textContent = "Pick a course and start.";
+      el.simAvatar.textContent = "🏃";
+    }
+  }
+}
+
 function renderAll(){
+
   renderStats();
   renderDaily();
   renderTrack();
@@ -840,6 +920,8 @@ function renderAll(){
   renderRaces();
   renderShop();
   renderSponsor();
+  renderQuickStart();
+  renderSimulator();
 
   // buttons
   el.stopTrainingBtn.disabled = !state.training;

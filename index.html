@@ -73,6 +73,17 @@
 
             <div class="divider"></div>
 
+            
+            <div class="divider"></div>
+            <div class="row">
+              <div class="pill">
+                <span class="muted">Quick start</span>
+                <select id="quickTrack" class="select"></select>
+                <select id="quickLevel" class="select"></select>
+              </div>
+              <button id="quickStartBtn" class="btn primary">Start Training</button>
+            </div>
+
             <div class="row">
               <button id="stopTrainingBtn" class="btn secondary">Stop Training</button>
               <button id="restBtn" class="btn secondary">Recovery Break</button>
@@ -135,6 +146,32 @@
             <div class="pill"><span class="muted">In progress</span> <b id="trainingCountdown">—</b></div>
           </div>
           <div class="hint">每個類別都有 Lv1–Lv10。先打過 LvN 才會解鎖 Lv(N+1)。</div>
+
+          <div class="divider"></div>
+
+          <section class="simCard">
+            <div class="simHead">
+              <div><b id="simTitle">Challenge Simulator</b></div>
+              <div class="pill"><span class="muted">Status</span> <b id="simStatus">—</b></div>
+            </div>
+
+            <div class="simLane">
+              <div id="simFill" class="simFill"></div>
+              <div id="simAvatar" class="simAvatar">🏃</div>
+              <div class="simMarks">
+                <span class="simMark" style="left:25%">🟦</span>
+                <span class="simMark" style="left:50%">🟨</span>
+                <span class="simMark" style="left:75%">🟥</span>
+                <span class="simMark" style="left:96%">🏁</span>
+              </div>
+            </div>
+
+            <div class="simMeta">
+              <div><span class="muted">Progress</span> <b id="simPct">0%</b></div>
+              <div><span class="muted">Result</span> <b id="simResult">—</b></div>
+            </div>
+          </section>
+
           <div id="trainingCards" class="trainGrid"></div>
         </section>
       </section>

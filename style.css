@@ -219,3 +219,51 @@ h2{font-size:16px;margin:0}
   font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
   font-size:12px;
 }
+
+.select{
+  background:rgba(0,0,0,.25);
+  color:var(--text);
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:10px;
+  padding:6px 8px;
+  font-weight:800;
+  outline:none;
+}
+
+.simCard{
+  margin-top:10px;
+  border:1px solid rgba(255,255,255,.07);
+  background:rgba(255,255,255,.03);
+  border-radius:16px;
+  padding:12px;
+}
+.simHead{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.simLane{
+  position:relative;
+  height:22px;
+  border-radius:999px;
+  overflow:hidden;
+  margin-top:10px;
+  background:rgba(0,0,0,.35);
+  border:1px solid rgba(255,255,255,.07);
+}
+.simFill{
+  position:absolute;left:0;top:0;bottom:0;width:0%;
+  background:linear-gradient(90deg, rgba(59,130,246,.85), rgba(34,197,94,.85));
+}
+.simAvatar{
+  position:absolute;top:-20px;left:0%;
+  filter:drop-shadow(0 6px 10px rgba(0,0,0,.35));
+  transition:left .20s linear;
+  font-size:18px;
+}
+.simAvatar.running{animation:bob .30s infinite alternate ease-in-out}
+.simMarks{position:absolute;inset:0;pointer-events:none}
+.simMark{
+  position:absolute;top:-22px;font-size:14px;opacity:.8;
+  transform:translateX(-50%);
+}
+.simMeta{
+  display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  margin-top:8px;font-size:13px;
+}
