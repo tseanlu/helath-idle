@@ -355,10 +355,10 @@ button:disabled{opacity:.45; cursor:not-allowed; transform:none !important;}
   100%{opacity:0; transform:translateY(48px) rotate(220deg)}
 }
 
-/* --- Minimal lively UI tweaks --- */
+/* --- Minimal lively UI tweaks (v1_5) --- */
 .hud{
   display:flex; gap:10px; flex-wrap:wrap;
-  margin-top:10px;
+  margin: 8px 0 10px 0;
 }
 .hudItem{
   padding:8px 12px;
@@ -369,14 +369,12 @@ button:disabled{opacity:.45; cursor:not-allowed; transform:none !important;}
   font-weight:900;
   letter-spacing:.01em;
 }
-.card.compact{padding:12px}
 .details{
   border:1px solid rgba(255,255,255,.10);
   background:rgba(255,255,255,.03);
   border-radius:16px;
   padding:10px 12px;
 }
-.details mini{}
 .detailsSum{
   cursor:pointer;
   list-style:none;
@@ -386,13 +384,8 @@ button:disabled{opacity:.45; cursor:not-allowed; transform:none !important;}
 .detailsSum::-webkit-details-marker{display:none}
 .detailsBody{margin-top:10px}
 details[open]{box-shadow:0 14px 30px rgba(0,0,0,.22)}
-/* slightly tighter typographic rhythm */
-.card h2{margin-bottom:8px}
-.card h3{margin-top:10px}
-.hint{margin-top:10px}
-/* subtle button feedback */
+button:disabled{opacity:.45; cursor:not-allowed; transform:none !important;}
 .btn{transition:transform .06s ease, filter .12s ease}
 .btn:active{transform:translateY(1px) scale(.99)}
-/* keep it lively but calm */
-@keyframes pulseSoft{0%{opacity:.85}50%{opacity:1}100%{opacity:.85}}
+@keyframes pulseSoft{0%{opacity:.86}50%{opacity:1}100%{opacity:.86}}
 .pillValue{animation:pulseSoft 2.6s ease-in-out infinite}
