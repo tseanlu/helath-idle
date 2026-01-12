@@ -61,6 +61,9 @@ const state = {
   training: null, // {trackId, level, startedAt, endAt}
 
   lastOutcome: null, // {trackId, level, outcome, moneyGain}
+  finishAnim: null, // {kind, until}
+  autoRepeat: true,
+  lastTrainingPick: { trackId: 'run', level: 1 },
 
   // shop
   owned: {}, // itemId: true
@@ -212,7 +215,7 @@ const el = Object.fromEntries([
   "trainingCountdown","trainingCards",
   "raceCards","raceResult",
   "stopTrainingBtn","restBtn","quickCashBtn","hint",
-  "quickTrack","quickLevel","quickStartBtn","simTitle","simStatus","simFill","simAvatar","simPct","simResult",
+  "quickTrack","quickLevel","quickStartBtn","autoRepeatToggle","simTitle","simStatus","simFill","simOverlay","simConfetti","simAvatar","simPct","simResult",
   "exportBtn","importBtn","resetBtn","saveBox",
 ].map(id=>[id, document.getElementById(id)]).filter(([_,v])=>v));
 
@@ -369,6 +372,8 @@ function resolveTrainingIfDone(){
 
   // remember last outcome for UI
   state.lastOutcome = { trackId, level, outcome, at: now() };
+  state.finishAnim = { kind: outcome, until: now() + 1100 };
+  if (outcome === 'success' || outcome === 'great') spawnConfetti(outcome);
 
   // fatigue cost and rewards
   const baseFat = (10 + level*3) * fatMult;
@@ -600,7 +605,23 @@ function tagForProb(p){
   return { cls:"bad", text:`Low ${Math.round(p*100)}%` };
 }
 
+function trainingPreview(trackId, level){
+  const p = trainingProb(trackId, level);
+  const dur = levelDurationMs(level);
+  const baseMoney = levelRewardBase(level);
+  // expected multipliers by outcome distribution (approx)
+  const pGreat = clamp(p*0.25, 0.03, 0.20);
+  const pSuccess = clamp(p - pGreat, 0.02, 0.92);
+  const pFail = 1 - p;
+  // ignore struggle split for preview simplicity
+  const moneyExp = baseMoney * (pGreat*1.25 + pSuccess*1.00 + pFail*0.25);
+  const fatBase = (10 + level*6) * appliedDaily(trackId).fatMult;
+  const fatExp = fatBase * (pGreat*1.05 + pSuccess*1.00 + pFail*1.20);
+  return { p, dur, moneyExp, fatExp };
+}
+
 function trainingProb(trackId, level){
+
   const req = levelReq(level);
   const { successAdd } = appliedDaily(trackId);
   const r = readiness();
@@ -874,7 +895,24 @@ function avatarForTrack(trackId){
   return ({run:"🏃", bike:"🚴", swim:"🏊", hike:"⛰️"})[trackId] || "🏃";
 }
 
+function spawnConfetti(kind){
+  if (!el.simConfetti) return;
+  el.simConfetti.innerHTML = "";
+  const n = (kind === "great") ? 16 : 10;
+  const colors = ["#60a5fa","#34d399","#fbbf24","#a78bfa","#fb7185"];
+  for (let i=0;i<n;i++){
+    const d = document.createElement("div");
+    d.className = "confetti";
+    d.style.left = `${Math.floor(rand01()*96)+2}%`;
+    d.style.animationDelay = `${Math.floor(rand01()*180)}ms`;
+    d.style.background = colors[i % colors.length];
+    d.style.transform = `translateY(0) rotate(${Math.floor(rand01()*90)}deg)`;
+    el.simConfetti.appendChild(d);
+  }
+}
+
 function renderSimulator(){
+
   if (!el.simFill || !el.simAvatar || !el.simStatus || !el.simPct || !el.simResult) return;
 
   if (state.training){
@@ -949,8 +987,29 @@ function tick(ts){
   requestAnimationFrame(tick);
 }
 
+
+function firstRunBootstrap(){
+  // if this is a brand-new save, start with a gentle default loop so the game feels alive
+  const raw = localStorage.getItem(SAVE_KEY);
+  if (raw) return;
+  state.money = 20;
+  state.vo2 = 25;
+  state.endurance = 8;
+  state.strength = 6;
+  state.recovery = 8;
+  state.fatigue = 12;
+  state.autoRepeat = true;
+  state.lastTrainingPick = { trackId: "run", level: 1 };
+  ensureDaily();
+  startTraining("run", 1);
+  save();
+}
+
+
 /** ---------------- Init & bindings ---------------- */
+
 load();
+firstRunBootstrap();
 ensureDaily();
 offlineProgress();
 

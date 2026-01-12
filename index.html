@@ -82,6 +82,11 @@
                 <select id="quickLevel" class="select"></select>
               </div>
               <button id="quickStartBtn" class="btn primary">Start Training</button>
+              <label class="switch">
+                <input type="checkbox" id="autoRepeatToggle" />
+                <span class="slider"></span>
+                <span class="switchText">Auto-repeat</span>
+              </label>
             </div>
 
             <div class="row">
@@ -157,6 +162,8 @@
 
             <div class="simLane">
               <div id="simFill" class="simFill"></div>
+              <div id="simOverlay" class="simOverlay hidden">—</div>
+              <div id="simConfetti" class="simConfetti" aria-hidden="true"></div>
               <div id="simAvatar" class="simAvatar">🏃</div>
               <div class="simMarks">
                 <span class="simMark" style="left:25%">🟦</span>
