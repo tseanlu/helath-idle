@@ -214,7 +214,7 @@ const el = Object.fromEntries([
   "dailyMods",
   "trainingCountdown","trainingCards",
   "raceCards","raceResult",
-  "stopTrainingBtn","restBtn","quickCashBtn","hint",
+  "stopTrainingBtn","restBtn","quickCashBtn","hint","hudMoney","hudReady","hudFatigue",
   "quickTrack","quickLevel","quickStartBtn","autoRepeatToggle","simTitle","simStatus","simFill","simOverlay","simConfetti","simAvatar","simPct","simResult",
   "exportBtn","importBtn","resetBtn","saveBox",
 ].map(id=>[id, document.getElementById(id)]).filter(([_,v])=>v));
@@ -949,7 +949,17 @@ function renderSimulator(){
   }
 }
 
+function renderHUD(){
+  const m = document.getElementById("hudMoney");
+  const r = document.getElementById("hudReady");
+  const f = document.getElementById("hudFatigue");
+  if (m) m.textContent = fmt0(state.money);
+  if (r) r.textContent = `${Math.floor(readiness()*100)}%`;
+  if (f) f.textContent = fmt0(state.fatigue);
+}
+
 function renderAll(){
+
 
   renderStats();
   renderDaily();
@@ -957,6 +967,7 @@ function renderAll(){
   renderTraining();
   renderRaces();
   renderShop();
+  renderHUD();
   renderSponsor();
   renderQuickStart();
   renderSimulator();
