@@ -3,181 +3,190 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Health Idle</title>
+  <title>Training Idle</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <main class="app">
-    <header class="header">
-      <div class="headerLeft">
-        <h1>Health Idle</h1>
-        <p class="sub">自動跑步＋節奏管理：等結算、接贊助、買裝備，慢慢練出更強的你。</p>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">🏃‍♂️</div>
+        <div>
+          <div class="title">Training Idle</div>
+          <div class="subtitle">train • recover • race</div>
+        </div>
       </div>
 
-      <div class="headerRight">
-        <div class="pill">
-          <div class="pillLabel">金錢</div>
-          <div class="pillValue">$<span id="points">0</span></div>
-        </div>
+      <div class="wallet">
+        <div class="walletLabel">Money</div>
+        <div class="walletValue">$<span id="money">0</span></div>
       </div>
     </header>
 
-    <!-- Tabs -->
-    <nav class="tabs" aria-label="navigation">
-      <button class="tab active" id="tabHome">🏃 主頁</button>
-      <button class="tab" id="tabShop">🛒 商店</button>
-      <!-- 🏁 賽事 會由 game.js 自動注入 -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="training">Training</button>
+      <button class="tab" data-tab="races">Races</button>
+      <button class="tab" data-tab="shop">Shop</button>
+      <button class="tab" data-tab="settings">Settings</button>
     </nav>
 
-    <!-- ========== HOME ========== -->
-    <section id="pageHome">
-      <!-- Track -->
-      <section class="card">
-        <div class="card-title">跑道</div>
+    <main>
+      <!-- Overview -->
+      <section id="overview" class="page active">
+        <div class="grid2">
+          <section class="card">
+            <div class="cardHead">
+              <h2>Track</h2>
+              <div class="pill"><span class="muted">Readiness</span> <b id="readiness">—</b></div>
+            </div>
 
-        <div class="row between">
-          <div>
-            <div class="muted micro">本圈進度</div>
-            <div class="strong"><span id="lapMiles">0.00</span> / <span id="lapTarget">1.00</span> mile</div>
-          </div>
-          <div style="text-align:right;">
-            <div class="muted micro">總里程</div>
-            <div class="strong"><span id="totalMiles">0.0</span> miles</div>
-          </div>
+            <div class="track">
+              <div class="trackBar">
+                <div id="trackFill" class="trackFill"></div>
+                <div id="trackRunner" class="runner">🏃</div>
+                <div class="markers">
+                  <span class="marker" style="left:20%">💧</span>
+                  <span class="marker" style="left:45%">⛰️</span>
+                  <span class="marker" style="left:70%">🚴</span>
+                  <span class="marker" style="left:92%">🏁</span>
+                </div>
+              </div>
+              <div class="trackMeta">
+                <div><span class="muted">Now</span> <b id="nowState">Idle</b></div>
+                <div><span class="muted">ETA</span> <b id="trainingETA">—</b></div>
+              </div>
+            </div>
+
+            <div class="bars">
+              <div class="barRow">
+                <div class="barLabel">Fatigue</div>
+                <div class="barWrap"><div id="fatigueBar" class="barFill danger"></div></div>
+                <div class="barValue"><span id="fatigue">0</span></div>
+              </div>
+              <div class="barRow">
+                <div class="barLabel">Condition</div>
+                <div class="barWrap"><div id="conditionBar" class="barFill info"></div></div>
+                <div class="barValue"><span id="condition">0</span></div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="row">
+              <button id="stopTrainingBtn" class="btn secondary">Stop Training</button>
+              <button id="restBtn" class="btn secondary">Recovery Break</button>
+              <button id="quickCashBtn" class="btn primary">Get Sponsor</button>
+            </div>
+            <div class="hint" id="hint">Tip: 高疲勞會讓你「做得少、練得慢、跑得差」。恢復很重要。</div>
+          </section>
+
+          <section class="card">
+            <div class="cardHead">
+              <h2>Stats</h2>
+              <div class="pill"><span class="muted">Day</span> <b id="day">1</b></div>
+            </div>
+
+            <div class="statGrid">
+              <div class="stat">
+                <div class="k">VO₂max</div>
+                <div class="v"><span id="vo2">—</span></div>
+                <div class="mini">eff: <span id="vo2Eff">—</span></div>
+              </div>
+              <div class="stat">
+                <div class="k">Endurance</div>
+                <div class="v"><span id="endurance">—</span></div>
+                <div class="mini">eff: <span id="endEff">—</span></div>
+              </div>
+              <div class="stat">
+                <div class="k">Strength</div>
+                <div class="v"><span id="strength">—</span></div>
+                <div class="mini">eff: <span id="strEff">—</span></div>
+              </div>
+              <div class="stat">
+                <div class="k">Recovery</div>
+                <div class="v"><span id="recovery">—</span></div>
+                <div class="mini">eff: <span id="recEff">—</span></div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="equipLine">
+              <div class="muted">Equipped</div>
+              <div id="equippedSummary" class="equipSummary">—</div>
+            </div>
+          </section>
         </div>
 
-        <div class="progress-wrap" style="margin-top:10px;">
-          <div id="lapBar" class="progress-bar"></div>
-          <div id="runner" class="runner" aria-hidden="true">🏃</div>
-        </div>
-
-        <div class="row between" style="margin-top:10px;">
-          <div class="muted small">狀態：<b id="activity">—</b></div>
-          <div class="muted small">下一個解鎖：<b id="nextUnlockText">—</b></div>
-        </div>
-      </section>
-
-      <section class="grid">
-        <!-- Status -->
         <section class="card">
-          <h2>狀態</h2>
-
-          <div class="statRow">
-            <div class="stat">
-              <div class="k">體力</div>
-              <div class="v"><span id="energy">0</span> / <span id="energyMax">0</span></div>
-              <div class="barWrap"><div id="energyBar" class="bar"></div></div>
-            </div>
-            <div class="stat">
-              <div class="k">健康</div>
-              <div class="v"><span id="health">0</span></div>
-              <div class="barWrap"><div id="healthBar" class="bar"></div></div>
-            </div>
+          <div class="cardHead">
+            <h2>Daily modifiers</h2>
+            <div class="pill"><span class="muted">Next roll</span> <b id="nextDaily">—</b></div>
           </div>
-
-          <div class="statRow">
-            <div class="stat">
-              <div class="k">心肺倍率</div>
-              <div class="v"><span id="cardio">1.00</span>x</div>
-            </div>
-            <div class="stat">
-              <div class="k">恢復倍率</div>
-              <div class="v"><span id="recovery">1.00</span>x</div>
-            </div>
-          </div>
-
-          <div class="statRow">
-            <div class="stat">
-              <div class="k">跑速</div>
-              <div class="v"><span id="speed">0.00</span> mile/min</div>
-            </div>
-            <div class="stat">
-              <div class="k">回復/秒</div>
-              <div class="v"><span id="regen">0.00</span></div>
-            </div>
-          </div>
-
-          <p class="hint" id="hint">提示會顯示在這裡。</p>
-        </section>
-
-        <!-- Actions + Sponsor -->
-        <section class="card">
-          <h2>行動</h2>
-          <div class="btnRow">
-            <button id="workoutBtn">🏋️ 訓練（消耗體力）</button>
-            <button id="restBtn">😴 小睡（回體力）</button>
-          </div>
-
-          <div class="divider"></div>
-
-          <h3>贊助</h3>
-          <div class="row between">
-            <div class="muted small">狀態：<b id="sponsorStatus">—</b></div>
-            <div class="muted small">倒數：<b id="sponsorCountdown">—</b></div>
-          </div>
-          <div class="row between" style="margin-top:8px;">
-            <button id="sponsorBtn">📣 領取贊助</button>
-            <div class="muted small">下一次冷卻會變成：<b id="sponsorNextCd">—</b></div>
-          </div>
-
-          <div class="divider"></div>
-
-          <h3>裝備</h3>
-          <div class="muted small" id="equipSummary">—</div>
-        </section>
-
-        <!-- Timeline + Event -->
-        <section class="card">
-          <h2>事件時間軸</h2>
-
-          <div class="timeline">
-            <div class="timelineItem">
-              <div class="k">下一個事件</div>
-              <div class="v"><b id="nextEventName">—</b></div>
-              <div class="muted small">倒數：<b id="nextEventCountdown">—</b></div>
-              <div class="muted small">建議：<span id="nextEventPlan">—</span></div>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          <div id="eventPanel" class="eventPanel hidden">
-            <div class="eventTitle">
-              <b id="eventTitle">事件</b>
-              <span class="badge" id="eventType">—</span>
-            </div>
-            <p class="eventDesc" id="eventDesc">—</p>
-            <div class="btnRow">
-              <button id="acceptEventBtn">✅ 接受</button>
-              <button id="skipEventBtn">⏭️ 跳過</button>
-            </div>
-            <p class="muted small" id="eventFinePrint">—</p>
-          </div>
-
-          <p class="muted small">小提示：事件會短暫影響「跑速 / 回復」。接受才會生效。</p>
+          <ul id="dailyMods" class="mods"></ul>
         </section>
       </section>
-    </section>
 
-    <!-- ========== SHOP ========== -->
-    <section id="pageShop" class="hidden">
-      <section class="card">
-        <div class="card-title">商店</div>
-        <p class="muted small">買到的裝備會自動裝備（同欄位會被替換）。</p>
-
-        <div class="shopGrid" id="shopList"></div>
-
-        <div class="divider"></div>
-
-        <h3>已擁有</h3>
-        <pre class="owned" id="ownedList">（尚未購買任何裝備）</pre>
+      <!-- Training -->
+      <section id="training" class="page">
+        <section class="card">
+          <div class="cardHead">
+            <h2>Training Courses</h2>
+            <div class="pill"><span class="muted">In progress</span> <b id="trainingCountdown">—</b></div>
+          </div>
+          <div class="hint">每個類別都有 Lv1–Lv10。先打過 LvN 才會解鎖 Lv(N+1)。</div>
+          <div id="trainingCards" class="trainGrid"></div>
+        </section>
       </section>
-    </section>
+
+      <!-- Races -->
+      <section id="races" class="page">
+        <section class="card">
+          <div class="cardHead">
+            <h2>Races</h2>
+            <div class="pill"><span class="muted">Readiness</span> <b id="readiness2">—</b></div>
+          </div>
+
+          <div class="hint">比賽是「驗證 build」，不是刷錢：獎金普通，但疲勞很痛。</div>
+          <div id="raceCards" class="raceGrid"></div>
+
+          <div class="divider"></div>
+          <div class="resultBox" id="raceResult" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <!-- Shop -->
+      <section id="shop" class="page">
+        <section class="card">
+          <div class="cardHead">
+            <h2>Shop</h2>
+            <div class="pill"><span class="muted">Money</span> <b>$<span id="money2">0</span></b></div>
+          </div>
+
+          <div class="hint">裝備只給 multiplier（不給暴力加成），避免數字爆表。</div>
+          <div id="shopGrid" class="shopGrid"></div>
+        </section>
+      </section>
+
+      <!-- Settings -->
+      <section id="settings" class="page">
+        <section class="card">
+          <h2>Settings</h2>
+          <div class="row">
+            <button id="exportBtn" class="btn secondary">Export Save</button>
+            <button id="importBtn" class="btn secondary">Import Save</button>
+            <button id="resetBtn" class="btn danger">Reset</button>
+          </div>
+          <textarea id="saveBox" class="saveBox" placeholder="Exported save appears here. Paste to import."></textarea>
+          <div class="hint">GitHub Pages 更新若看不到：請強制刷新（Cmd+Shift+R / Ctrl+F5）。</div>
+        </section>
+      </section>
+    </main>
 
     <footer class="footer">
-      <span class="muted small">更新後若沒生效：請強制刷新（Ctrl+F5 / Cmd+Shift+R）。</span>
+      <span class="muted">v3 • training model • no prestige</span>
     </footer>
-  </main>
+  </div>
 
   <script src="game.js"></script>
 </body>

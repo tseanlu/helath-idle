@@ -1,785 +1,894 @@
-/* =========================================================
-   Health Idle - Sport UI + Tabs + Runner + Sponsor + Shop
-   - Auto run/rest loop
-   - Sponsor (cooldown grows)
-   - Shop (equipment boosts cardio/recovery)
-   - Events (timeline + accept/skip)
-   - Save/load + offline progress cap
-   ========================================================= */
+/* Training Idle v3 (full) – no prestige
+   - Stats: VO2 (25..75), Endurance/Strength/Recovery (0..100)
+   - Short-term: Fatigue (0..160), Condition (-0.15..+0.15)
+   - Training tracks: Run/Bike/Swim/Hike with Lv1..Lv10
+   - Races: 5K/10K/Half/Marathon (validate build; fatigue hit)
+   - Shop: equipment multipliers by slot
+   - Sponsor button: cooldown grows each use (2m, 5m, 10m, 30m, ...)
+   - Save/load + offline resolution + daily modifiers roll
+*/
 
-const SAVE_KEY = "health_idle_sport_v1";
-const BUILD = "2026-01-08a";
+const SAVE_KEY = "training_idle_v3_full";
+const BUILD = "2026-01-12";
+
+const DAY_MS = 6 * 60 * 60 * 1000;      // 6 hours per in-game day (real-time)
+const OFFLINE_CAP_MS = 8 * 60 * 60 * 1000;
+
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const fmt1 = (x) => (Math.round(x * 10) / 10).toFixed(1);
+const fmt2 = (x) => (Math.round(x * 100) / 100).toFixed(2);
+const now = () => Date.now();
+
+function rand01() { return Math.random(); }
+function pick(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+function msToClock(ms){
+  if (ms <= 0) return "0s";
+  const s = Math.floor(ms/1000);
+  const hh = Math.floor(s/3600);
+  const mm = Math.floor((s%3600)/60);
+  const ss = s%60;
+  if (hh>0) return `${hh}h ${mm}m`;
+  if (mm>0) return `${mm}m ${ss}s`;
+  return `${ss}s`;
+}
 
 /** ---------------- State ---------------- */
 const state = {
   money: 0,
 
-  energy: 70,
-  energyMax: 100,
+  // long-term
+  vo2: 25,          // 25..75
+  endurance: 8,     // 0..100
+  strength: 6,
+  recovery: 8,
 
-  // "Health" is a long-term quality metric (keep bounded-ish)
-  health: 12,         // starts small
-  healthCapUI: 120,   // only for progress bar visualization
+  // short-term
+  fatigue: 18,      // 0..160
+  condition: 0.00,  // -0.15..+0.15
 
-  // Base abilities (training adds small permanent increments)
-  baseCardio: 1.0,
-  baseRecovery: 1.0,
+  day: 1,
+  nextDailyAt: now() + DAY_MS,
+  dailyMods: [],
 
-  // Auto activity
-  activity: "running",     // running | resting
-  runDrainPerSec: 6.2,     // energy drain while running
-  restThreshold: 0.30,     // start running when energy >= threshold
-
-  // Track
-  lapTarget: 1.0,
-  lapMiles: 0,
-  totalMiles: 0,
-  milesPerSecBase: 0.0065, // 0.39 mile/min baseline
-  trackLevel: 0,
-
-  // Sponsor (main money)
-  sponsor: {
-    tier: 0,               // increases each claim
-    nextAt: Date.now(),    // when claim available
-    lastResult: null
+  // training progression
+  track: {
+    run:  { unlockedLevel: 1, clears: Array(10).fill(0) },
+    bike: { unlockedLevel: 1, clears: Array(10).fill(0) },
+    swim: { unlockedLevel: 1, clears: Array(10).fill(0) },
+    hike: { unlockedLevel: 1, clears: Array(10).fill(0) },
   },
 
-  // Equipment ownership
-  owned: {
-    shoes: null,
-    clothes: null,
-    towel: null,
-    goggles: null
-  },
-
-  // Active event
-  event: null,              // {type,title,desc,endsAt,accepted,mult:{speed,money,regen}}
-  nextEventAt: Date.now() + 90_000,
-  nextEventType: null,
-
-  // Offline
-  lastSeen: Date.now()
-};
-
-/** ---------------- Data: Shop ---------------- */
-const SHOP_ITEMS = [
-  // shoes
-  { id: "shoe_basic",   slot: "shoes",  name: "👟 基礎跑鞋", price: 60,  stats: { cardio: 1.05 }, desc: "跑步更輕快：心肺 +5%" },
-  { id: "shoe_pro",     slot: "shoes",  name: "👟 競速跑鞋", price: 180, stats: { cardio: 1.12 }, desc: "更快配速：心肺 +12%" },
-  { id: "shoe_elite",   slot: "shoes",  name: "👟 菁英碳板鞋", price: 420, stats: { cardio: 1.20 }, desc: "穩定輸出：心肺 +20%" },
-
-  // clothes
-  { id: "cloth_basic",  slot: "clothes", name: "👕 排汗上衣", price: 80,  stats: { recovery: 1.06 }, desc: "更舒適：恢復 +6%" },
-  { id: "cloth_pro",    slot: "clothes", name: "👕 壓縮衣",   price: 220, stats: { recovery: 1.12 }, desc: "更快回復：恢復 +12%" },
-
-  // towel
-  { id: "towel_basic",  slot: "towel",  name: "🧣 冰感毛巾", price: 90,  stats: { recovery: 1.05 }, desc: "降溫補給：恢復 +5%" },
-  { id: "towel_pro",    slot: "towel",  name: "🧣 快乾毛巾", price: 240, stats: { recovery: 1.10 }, desc: "效率補給：恢復 +10%" },
-
-  // goggles
-  { id: "goggle_basic", slot: "goggles", name: "🕶️ 防風鏡",  price: 110, stats: { cardio: 1.04 }, desc: "視野更穩：心肺 +4%" },
-  { id: "goggle_pro",   slot: "goggles", name: "🕶️ 運動太陽眼鏡", price: 260, stats: { cardio: 1.08 }, desc: "更專注：心肺 +8%" }
-];
-
-const TRACK_UNLOCKS = [
-  { miles: 2,  text: "解鎖：贊助可能出現「大成功」", apply: () => {} },
-  { miles: 6,  text: "解鎖：事件更常出現", apply: () => { /* handled in scheduling */ } },
-  { miles: 12, text: "解鎖：跑步更省力（耗體力 -8%）", apply: () => { state.runDrainPerSec *= 0.92; } },
-  { miles: 20, text: "解鎖：基礎跑速 +10%", apply: () => { state.milesPerSecBase *= 1.10; } }
-];
-
-/** ---------------- DOM ---------------- */
-const el = {
-  // tabs
-  tabHome: document.getElementById("tabHome"),
-  tabShop: document.getElementById("tabShop"),
-  pageHome: document.getElementById("pageHome"),
-  pageShop: document.getElementById("pageShop"),
-
-  points: document.getElementById("points"),
-
-  // track
-  lapMiles: document.getElementById("lapMiles"),
-  lapTarget: document.getElementById("lapTarget"),
-  totalMiles: document.getElementById("totalMiles"),
-  lapBar: document.getElementById("lapBar"),
-  runner: document.getElementById("runner"),
-  nextUnlockText: document.getElementById("nextUnlockText"),
-  activity: document.getElementById("activity"),
-
-  // status
-  energy: document.getElementById("energy"),
-  energyMax: document.getElementById("energyMax"),
-  health: document.getElementById("health"),
-  energyBar: document.getElementById("energyBar"),
-  healthBar: document.getElementById("healthBar"),
-  cardio: document.getElementById("cardio"),
-  recovery: document.getElementById("recovery"),
-  speed: document.getElementById("speed"),
-  regen: document.getElementById("regen"),
-  hint: document.getElementById("hint"),
-
-  // actions
-  workoutBtn: document.getElementById("workoutBtn"),
-  restBtn: document.getElementById("restBtn"),
-
-  // sponsor
-  sponsorBtn: document.getElementById("sponsorBtn"),
-  sponsorCountdown: document.getElementById("sponsorCountdown"),
-  sponsorNextCd: document.getElementById("sponsorNextCd"),
-  sponsorStatus: document.getElementById("sponsorStatus"),
-  equipSummary: document.getElementById("equipSummary"),
-
-  // events
-  nextEventName: document.getElementById("nextEventName"),
-  nextEventCountdown: document.getElementById("nextEventCountdown"),
-  nextEventPlan: document.getElementById("nextEventPlan"),
-
-  eventPanel: document.getElementById("eventPanel"),
-  eventTitle: document.getElementById("eventTitle"),
-  eventType: document.getElementById("eventType"),
-  eventDesc: document.getElementById("eventDesc"),
-  acceptEventBtn: document.getElementById("acceptEventBtn"),
-  skipEventBtn: document.getElementById("skipEventBtn"),
-  eventFinePrint: document.getElementById("eventFinePrint"),
+  training: null, // {trackId, level, startedAt, endAt}
 
   // shop
-  shopList: document.getElementById("shopList"),
-  ownedList: document.getElementById("ownedList")
+  owned: {}, // itemId: true
+  equipped: { shoes:null, top:null, towel:null, poles:null },
+
+  // sponsor
+  sponsorStep: 0,
+  sponsorReadyAt: 0,
+
+  lastSeen: now(),
 };
 
-/** ---------------- Utils ---------------- */
-function clamp() {
-  state.energy = Math.max(0, Math.min(state.energy, state.energyMax));
-  state.money = Math.max(0, state.money);
-  state.health = Math.max(0, state.health);
-  state.lapMiles = Math.max(0, state.lapMiles);
-  state.totalMiles = Math.max(0, state.totalMiles);
+/** ---------------- Content ---------------- */
+const TRACKS = [
+  { id:"run",  name:"Run",  icon:"🏃", main:"vo2",  alt:"endurance" },
+  { id:"bike", name:"Bike", icon:"🚴", main:"endurance", alt:"strength" },
+  { id:"swim", name:"Swim", icon:"🏊", main:"recovery", alt:"vo2" },
+  { id:"hike", name:"Hike", icon:"⛰️", main:"strength", alt:"endurance" },
+];
+
+function levelReq(level){
+  // required readiness increases gently
+  // L1 ~ 0.22, L10 ~ 0.72
+  return 0.18 + level * 0.055;
 }
 
-function save() {
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ ...state, lastSeen: Date.now() }));
-  } catch {}
+function levelDurationMs(level){
+  // L1 25s -> L10 90s
+  return Math.floor((20 + level*7) * 1000);
 }
 
-function load() {
-  const raw = localStorage.getItem(SAVE_KEY);
-  if (!raw) return;
-  try {
-    const obj = JSON.parse(raw);
-    Object.assign(state, obj);
-
-    // defensive defaults
-    if (!state.sponsor) state.sponsor = { tier: 0, nextAt: Date.now(), lastResult: null };
-    if (!state.owned) state.owned = { shoes: null, clothes: null, towel: null, goggles: null };
-    if (!state.nextEventAt) state.nextEventAt = Date.now() + 90_000;
-    if (!state.activity) state.activity = "running";
-  } catch {}
+function levelRewardBase(level){
+  // money reward baseline
+  return 6 + level * 3;
 }
 
-function fmtMMSS(ms) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const mm = String(Math.floor(s / 60)).padStart(2, "0");
-  const ss = String(s % 60).padStart(2, "0");
-  return `${mm}:${ss}`;
-}
+const SHOP_ITEMS = [
+  // shoes (VO2)
+  { id:"shoes_1", slot:"shoes", name:"Trainer Shoes", price:60,  mult:{vo2:1.05}, desc:"+5% VO₂ (eff)" },
+  { id:"shoes_2", slot:"shoes", name:"Carbon Shoes",  price:180, mult:{vo2:1.10}, desc:"+10% VO₂ (eff)" },
+  { id:"shoes_3", slot:"shoes", name:"Elite Spikes",  price:420, mult:{vo2:1.16}, desc:"+16% VO₂ (eff)" },
 
-function randChoice(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
+  // top (Endurance)
+  { id:"top_1", slot:"top", name:"Breathable Top", price:70,  mult:{endurance:1.06}, desc:"+6% Endurance (eff)" },
+  { id:"top_2", slot:"top", name:"Aero Singlet",    price:210, mult:{endurance:1.12}, desc:"+12% Endurance (eff)" },
+  { id:"top_3", slot:"top", name:"Pro Kit",         price:480, mult:{endurance:1.18}, desc:"+18% Endurance (eff)" },
 
-/** ---------------- Abilities (base + equipment + diminishing health effect) ---------------- */
-function healthPower() {
-  // diminishing return to avoid runaway
-  return Math.sqrt(Math.max(0, state.health));
-}
+  // towel (Recovery)
+  { id:"towel_1", slot:"towel", name:"Cooling Towel", price:80,  mult:{recovery:1.08}, desc:"+8% Recovery (eff)" },
+  { id:"towel_2", slot:"towel", name:"Foam Roller",   price:240, mult:{recovery:1.15}, desc:"+15% Recovery (eff)" },
+  { id:"towel_3", slot:"towel", name:"Massage Gun",   price:520, mult:{recovery:1.22}, desc:"+22% Recovery (eff)" },
 
-function equipmentMultiplier(key) {
-  // key: cardio or recovery
-  let mult = 1.0;
-  for (const slot of ["shoes", "clothes", "towel", "goggles"]) {
-    const id = state.owned[slot];
+  // poles (Strength)
+  { id:"poles_1", slot:"poles", name:"Grip Trainer",  price:65,  mult:{strength:1.07}, desc:"+7% Strength (eff)" },
+  { id:"poles_2", slot:"poles", name:"Hill Poles",    price:200, mult:{strength:1.13}, desc:"+13% Strength (eff)" },
+  { id:"poles_3", slot:"poles", name:"Weighted Vest", price:460, mult:{strength:1.20}, desc:"+20% Strength (eff)" },
+];
+
+const DAILY_POOL = [
+  { id:"cool_air", title:"Cool air",      text:"Run fatigue cost -12%",   eff:{ fatigueMult:{run:0.88} } },
+  { id:"headwind", title:"Headwind",      text:"Bike success -10%",       eff:{ successAdd:{bike:-0.10} } },
+  { id:"pool_open",title:"Pool open",     text:"Swim gains +15%",         eff:{ gainMult:{swim:1.15} } },
+  { id:"trail_day",title:"Trail day",     text:"Hike gains +12%",         eff:{ gainMult:{hike:1.12} } },
+  { id:"good_sleep",title:"Good sleep",   text:"Condition +0.05 today",   eff:{ conditionAdd:0.05 } },
+  { id:"stiff_body",title:"Stiff body",   text:"Condition -0.05 today",   eff:{ conditionAdd:-0.05 } },
+  { id:"recovery_focus",title:"Recovery", text:"Fatigue recovery +18%",   eff:{ fatigueRegenMult:1.18 } },
+];
+
+/** ---------------- Derived values ---------------- */
+function equippedMult(){
+  const mult = { vo2:1, endurance:1, strength:1, recovery:1 };
+  for (const slot of Object.keys(state.equipped)){
+    const id = state.equipped[slot];
     if (!id) continue;
-    const item = SHOP_ITEMS.find(x => x.id === id);
+    const item = SHOP_ITEMS.find(x=>x.id===id);
     if (!item) continue;
-    if (item.stats && item.stats[key]) mult *= item.stats[key];
+    for (const k of Object.keys(item.mult)){
+      mult[k] *= item.mult[k];
+    }
   }
   return mult;
 }
 
-function cardioMult() {
-  // cardio influenced by baseCardio * equipment * small health factor
-  return state.baseCardio * equipmentMultiplier("cardio") * (1 + healthPower() * 0.01);
-}
-
-function recoveryMult() {
-  return state.baseRecovery * equipmentMultiplier("recovery") * (1 + healthPower() * 0.008);
-}
-
-/** ---------------- Economy / movement ---------------- */
-function milesPerSec() {
-  // speed affected by cardio & events
-  return state.milesPerSecBase * cardioMult() * eventMultipliers().speed;
-}
-
-function energyRegenPerSec() {
-  // resting regen affected by recovery & events
-  return (1.25 * recoveryMult()) * eventMultipliers().regen;
-}
-
-/** small passive money so player never fully stuck */
-function passiveMoneyPerSec() {
-  return 0.005; // tiny
-}
-
-function lapRewardMoney() {
-  // lap reward: moderate, based on cardio
-  return Math.floor(10 + 6 * (cardioMult() - 1));
-}
-
-/** ---------------- Sponsor system ---------------- */
-const SPONSOR_CD_STEPS_MIN = [2, 5, 10, 30, 60, 120]; // minutes
-function sponsorCooldownMinutes(tier) {
-  if (tier < SPONSOR_CD_STEPS_MIN.length) return SPONSOR_CD_STEPS_MIN[tier];
-  return 120; // cap at 2h
-}
-
-function sponsorNextCooldownMinutes() {
-  return sponsorCooldownMinutes(state.sponsor.tier + 1);
-}
-
-function canClaimSponsor() {
-  return Date.now() >= state.sponsor.nextAt;
-}
-
-function sponsorPayout() {
-  // base payout scales with total miles a bit; also unlock at 2 miles: big success possible
-  const base = 35 + state.totalMiles * 3;
-  const allowBig = state.totalMiles >= 2;
-
-  // probabilities
-  const r = Math.random();
-  if (allowBig && r < 0.10) {
-    // big success
-    return { kind: "大成功", money: Math.floor(base * 3.2), healthDelta: +0.6 };
-  }
-  if (r < 0.80) {
-    // normal success
-    return { kind: "成功", money: Math.floor(base * 1.2), healthDelta: +0.2 };
-  }
-  // fail
-  return { kind: "失敗", money: Math.floor(base * 0.2), healthDelta: -0.3 };
-}
-
-function claimSponsor() {
-  if (!canClaimSponsor()) return;
-
-  const result = sponsorPayout();
-  state.money += result.money;
-  state.health += result.healthDelta;
-
-  state.sponsor.lastResult = result;
-  const cdMin = sponsorCooldownMinutes(state.sponsor.tier);
-  state.sponsor.nextAt = Date.now() + cdMin * 60 * 1000;
-  state.sponsor.tier += 1;
-
-  clamp();
-  el.hint.textContent = `📣 贊助${result.kind}：+$${result.money}，健康 ${result.healthDelta >= 0 ? "+" : ""}${result.healthDelta.toFixed(1)}`;
-  save();
-  render();
-}
-
-/** ---------------- Events ---------------- */
-function scheduleNextEvent() {
-  // base interval, gets a bit more frequent after 6 miles unlock
-  const frequent = state.totalMiles >= 6;
-  const min = frequent ? 60 : 90;
-  const max = frequent ? 110 : 150;
-  const ms = (min + Math.random() * (max - min)) * 1000;
-
-  state.nextEventAt = Date.now() + ms;
-  state.nextEventType = pickEventType();
-}
-
-function pickEventType() {
-  const types = ["tailwind", "bonus", "rain", "cramp"];
-  return randChoice(types);
-}
-
-function buildEvent(type) {
-  const now = Date.now();
-  const endsAt = now + 90_000;
-
-  if (type === "tailwind") {
-    return {
-      type, title: "🟢 順風日", desc: "跑得更快一點。",
-      accepted: false, endsAt,
-      mult: { speed: 1.30, money: 1.00, regen: 1.00 },
-      tip: "建議：維持跑步，趁 buff 推進里程。"
-    };
-  }
-  if (type === "bonus") {
-    return {
-      type, title: "🟡 商業合作", desc: "跑步結算更賺，但恢復稍慢。",
-      accepted: false, endsAt,
-      mult: { speed: 1.00, money: 1.00, regen: 0.88 },
-      tip: "建議：如果你體力還夠，就接受；太累就跳過。"
-    };
-  }
-  if (type === "rain") {
-    return {
-      type, title: "🔵 下雨天", desc: "跑不快，但休息回復更好。",
-      accepted: false, endsAt,
-      mult: { speed: 0.85, money: 1.00, regen: 1.35 },
-      tip: "建議：接受後更適合休息回血。"
-    };
-  }
-  // cramp
+function effStats(){
+  const m = equippedMult();
   return {
-    type: "cramp", title: "🔴 抽筋警訊", desc: "跑步效率下降。休息會更快緩解。",
-    accepted: false, endsAt,
-    mult: { speed: 0.75, money: 1.00, regen: 1.08 },
-    tip: "建議：如果正在跑到很累，接受後轉休息。"
+    vo2: state.vo2 * m.vo2,
+    endurance: state.endurance * m.endurance,
+    strength: state.strength * m.strength,
+    recovery: state.recovery * m.recovery,
   };
 }
 
-function eventMultipliers() {
-  if (!state.event || !state.event.accepted) return { speed: 1, money: 1, regen: 1 };
-  return state.event.mult;
+function readiness(){
+  const s = effStats();
+  const vo2n = clamp((s.vo2 - 25) / 50, 0, 1); // 0..1
+  const endn = clamp(s.endurance / 100, 0, 1);
+  const strn = clamp(s.strength / 100, 0, 1);
+  const recn = clamp(s.recovery / 100, 0, 1);
+  const base = 0.40*vo2n + 0.25*endn + 0.15*strn + 0.20*recn;
+
+  // fatigue penalty scales
+  const fatPen = clamp(state.fatigue / 220, 0, 0.65);
+  const cond = clamp(state.condition, -0.20, 0.20);
+
+  const adj = clamp(base * (1 + cond) * (1 - fatPen), 0, 1);
+  return adj;
 }
 
-function updateEventLifecycle() {
-  const now = Date.now();
+function fatigueMax(){ return 160; }
 
-  if (!state.nextEventType) state.nextEventType = pickEventType();
-  if (!state.nextEventAt) scheduleNextEvent();
-
-  // spawn prompt
-  if (!state.event && now >= state.nextEventAt) {
-    state.event = buildEvent(state.nextEventType);
-    scheduleNextEvent();
-    el.hint.textContent = `事件出現：${state.event.title}`;
-    save();
+function fatigueRegenPerSec(){
+  // base + recovery-driven; daily mods can boost
+  const s = effStats();
+  const base = 0.010;              // per sec (36 per hour) – noticeable
+  const extra = s.recovery * 0.00006; // + ~0.006 at 100
+  let mult = 1.0;
+  for (const d of state.dailyMods){
+    if (d.eff.fatigueRegenMult) mult *= d.eff.fatigueRegenMult;
   }
+  return (base + extra) * mult;
+}
 
-  // expire prompt (not accepted)
-  if (state.event && !state.event.accepted && now >= state.event.endsAt) {
-    state.event = null;
-    save();
+function appliedDaily(trackId){
+  let gainMult = 1.0;
+  let fatMult = 1.0;
+  let successAdd = 0.0;
+  let condAdd = 0.0;
+
+  for (const d of state.dailyMods){
+    if (d.eff.gainMult && d.eff.gainMult[trackId]) gainMult *= d.eff.gainMult[trackId];
+    if (d.eff.fatigueMult && d.eff.fatigueMult[trackId]) fatMult *= d.eff.fatigueMult[trackId];
+    if (d.eff.successAdd && d.eff.successAdd[trackId]) successAdd += d.eff.successAdd[trackId];
+    if (d.eff.conditionAdd) condAdd += d.eff.conditionAdd;
   }
+  return { gainMult, fatMult, successAdd, condAdd };
+}
 
-  // end accepted event
-  if (state.event && state.event.accepted && now >= state.event.endsAt) {
-    el.hint.textContent = `事件結束：${state.event.title}`;
-    state.event = null;
-    save();
+/** ---------------- UI ---------------- */
+const el = Object.fromEntries([
+  "money","money2",
+  "readiness","readiness2","day","nextDaily",
+  "trackFill","trackRunner","nowState","trainingETA",
+  "fatigue","fatigueBar","condition","conditionBar",
+  "vo2","endurance","strength","recovery",
+  "vo2Eff","endEff","strEff","recEff",
+  "equippedSummary",
+  "dailyMods",
+  "trainingCountdown","trainingCards",
+  "raceCards","raceResult",
+  "stopTrainingBtn","restBtn","quickCashBtn","hint",
+  "exportBtn","importBtn","resetBtn","saveBox",
+].map(id=>[id, document.getElementById(id)]).filter(([_,v])=>v));
+
+function setActiveTab(tabId){
+  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===tabId));
+  document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id===tabId));
+}
+document.querySelectorAll(".tab").forEach(btn=>{
+  btn.addEventListener("click", ()=>setActiveTab(btn.dataset.tab));
+});
+
+/** ---------------- Save/Load ---------------- */
+function save(){
+  state.lastSeen = now();
+  localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+}
+function load(){
+  const raw = localStorage.getItem(SAVE_KEY);
+  if (!raw) return;
+  try{
+    const parsed = JSON.parse(raw);
+    // merge cautiously
+    Object.assign(state, parsed);
+    // backfill new keys if missing
+    state.owned ||= {};
+    state.equipped ||= { shoes:null, top:null, towel:null, poles:null };
+    state.track ||= {
+      run:{unlockedLevel:1, clears:Array(10).fill(0)},
+      bike:{unlockedLevel:1, clears:Array(10).fill(0)},
+      swim:{unlockedLevel:1, clears:Array(10).fill(0)},
+      hike:{unlockedLevel:1, clears:Array(10).fill(0)},
+    };
+    if (!Array.isArray(state.dailyMods)) state.dailyMods = [];
+  }catch(e){
+    console.warn("Failed to load save:", e);
   }
 }
 
-function acceptEvent() {
-  if (!state.event) return;
-  state.event.accepted = true;
-  el.hint.textContent = `✅ 已接受：${state.event.title}`;
+function exportSave(){
+  el.saveBox.value = JSON.stringify(state);
+  el.saveBox.focus();
+  el.saveBox.select();
+}
+function importSave(){
+  const txt = el.saveBox.value.trim();
+  if (!txt) return;
+  try{
+    const parsed = JSON.parse(txt);
+    localStorage.setItem(SAVE_KEY, JSON.stringify(parsed));
+    location.reload();
+  }catch(e){
+    alert("Import failed: invalid JSON");
+  }
+}
+function resetSave(){
+  if (!confirm("Reset all progress?")) return;
+  localStorage.removeItem(SAVE_KEY);
+  location.reload();
+}
+
+/** ---------------- Daily roll ---------------- */
+function rollDaily(){
+  const picks = [];
+  const pool = [...DAILY_POOL];
+  // pick 2 distinct
+  for (let i=0;i<2;i++){
+    const p = pool.splice(Math.floor(Math.random()*pool.length), 1)[0];
+    picks.push(p);
+  }
+  state.dailyMods = picks;
+  // base daily condition roll + mod add
+  let cond = (Math.random()*0.30 - 0.15); // -0.15..+0.15
+  const add = picks.reduce((a,d)=>a + (d.eff.conditionAdd || 0), 0);
+  cond = clamp(cond + add, -0.20, 0.20);
+  state.condition = cond;
+  state.nextDailyAt = now() + DAY_MS;
+  state.day = (state.day || 1) + 1;
+}
+
+function ensureDaily(){
+  if (!state.nextDailyAt) state.nextDailyAt = now() + DAY_MS;
+  if (!Array.isArray(state.dailyMods) || state.dailyMods.length === 0){
+    // init day 1 modifiers without increment day
+    state.dailyMods = [pick(DAILY_POOL), pick(DAILY_POOL.filter(x=>x.id!==state.dailyMods?.[0]?.id))];
+    let cond = (Math.random()*0.30 - 0.15);
+    const add = state.dailyMods.reduce((a,d)=>a + (d.eff.conditionAdd || 0), 0);
+    state.condition = clamp(cond + add, -0.20, 0.20);
+  }
+}
+
+/** ---------------- Training logic ---------------- */
+function trainingInProgress(){
+  return state.training && state.training.endAt > now();
+}
+
+function trainingRemainingMs(){
+  if (!state.training) return 0;
+  return state.training.endAt - now();
+}
+
+function stopTraining(){
+  if (!state.training) return;
+  state.training = null;
+  el.hint.textContent = "Training stopped.";
   save();
-  render();
 }
 
-function skipEvent() {
-  if (!state.event) return;
-  el.hint.textContent = "你跳過了事件。";
-  state.event = null;
+function restBreak(){
+  // immediate fatigue drop with a small time penalty (no gating)
+  const s = effStats();
+  const drop = 10 + s.recovery * 0.06;
+  state.fatigue = clamp(state.fatigue - drop, 0, fatigueMax());
+  el.hint.textContent = `Recovery break: Fatigue -${Math.floor(drop)}.`;
   save();
-  render();
 }
 
-/** ---------------- Track unlocks ---------------- */
-function checkTrackUnlocks() {
-  while (state.trackLevel < TRACK_UNLOCKS.length &&
-         state.totalMiles >= TRACK_UNLOCKS[state.trackLevel].miles) {
-    const u = TRACK_UNLOCKS[state.trackLevel];
-    state.trackLevel += 1;
-    u.apply?.();
-    el.hint.textContent = `🔓 里程解鎖！${u.text}`;
-    save();
-  }
-}
-
-/** ---------------- Activity loop ---------------- */
-function stepActivity(dt) {
-  // always get tiny passive money
-  state.money += passiveMoneyPerSec() * dt;
-
-  if (state.activity === "running") {
-    // drain energy
-    state.energy -= state.runDrainPerSec * dt;
-    if (state.energy <= 0) {
-      state.energy = 0;
-      state.activity = "resting";
-      // subtle hint only if needed
-    }
-
-    // earn miles
-    const dm = milesPerSec() * dt;
-    state.lapMiles += dm;
-    state.totalMiles += dm;
-
-    // lap completion -> money + tiny health (diminishing)
-    while (state.lapMiles >= state.lapTarget) {
-      state.lapMiles -= state.lapTarget;
-
-      const m = lapRewardMoney();
-      state.money += m;
-
-      const hg = 0.55 / (1 + healthPower() * 0.25);
-      state.health += hg;
-
-      el.hint.textContent = `🏁 完成一圈！+$${m}，健康 +${hg.toFixed(2)}`;
-      checkTrackUnlocks();
-    }
-
-  } else {
-    // resting
-    state.energy += energyRegenPerSec() * dt;
-    if (state.energy >= state.energyMax * state.restThreshold) {
-      state.activity = "running";
-    }
-  }
-}
-
-/** ---------------- Manual actions ---------------- */
-function workout() {
-  const cost = 18;
-  if (state.energy < cost) {
-    el.hint.textContent = "體力不足，先休息。";
+function startTraining(trackId, level){
+  if (trainingInProgress()){
+    el.hint.textContent = "Already training. Stop it first if you want to switch.";
     return;
   }
-  state.energy -= cost;
-
-  // training improves base abilities slightly (long-term)
-  const gainH = 2.2 / (1 + healthPower() * 0.35);
-  state.health += gainH;
-
-  // small permanent ability increments
-  state.baseCardio += 0.0025;
-  state.baseRecovery += 0.0020;
-
-  clamp();
-  el.hint.textContent = `🏋️ 訓練完成：健康 +${gainH.toFixed(2)}（心肺/恢復小幅永久提升）`;
+  const info = state.track[trackId];
+  if (level > info.unlockedLevel){
+    el.hint.textContent = "Locked level. Clear previous level to unlock.";
+    return;
+  }
+  const dur = levelDurationMs(level);
+  state.training = { trackId, level, startedAt: now(), endAt: now() + dur };
+  el.hint.textContent = `Started ${trackId.toUpperCase()} Lv${level} (${msToClock(dur)})`;
   save();
-  render();
 }
 
-function restNap() {
-  state.energy += 14;
-  state.health += 0.12;
-  clamp();
-  el.hint.textContent = "😴 小睡一下：體力回來了。";
+function resolveTrainingIfDone(){
+  if (!state.training) return false;
+  if (state.training.endAt > now()) return false;
+
+  const { trackId, level } = state.training;
+  state.training = null;
+
+  const { gainMult, fatMult, successAdd } = appliedDaily(trackId);
+
+  // success probability based on readiness vs requirement
+  const req = levelReq(level);
+  const r = readiness();
+  let p = 0.15 + (r - req) * 1.25;
+  p = clamp(p + successAdd, 0.05, 0.92);
+
+  const roll = rand01();
+  let outcome = "fail";
+  if (roll < p*0.55) outcome = "great";
+  else if (roll < p) outcome = "success";
+  else if (roll < clamp(p + 0.18, 0, 1)) outcome = "struggle";
+  else outcome = "fail";
+
+  // fatigue cost and rewards
+  const baseFat = (10 + level*3) * fatMult;
+  const baseMoney = levelRewardBase(level);
+
+  // growth baselines
+  const growthMain = 0.35 + level*0.08;
+  const growthAlt  = 0.18 + level*0.05;
+  const growthRec  = 0.10 + level*0.03;
+
+  const track = TRACKS.find(t=>t.id===trackId);
+
+  let moneyMul = 1.0;
+  let gainMul2 = gainMult;
+  let fatMul2  = 1.0;
+
+  if (outcome === "great"){ moneyMul = 1.25; gainMul2 *= 1.25; fatMul2 = 1.05; }
+  if (outcome === "success"){ moneyMul = 1.00; gainMul2 *= 1.00; fatMul2 = 1.00; }
+  if (outcome === "struggle"){ moneyMul = 0.70; gainMul2 *= 0.60; fatMul2 = 1.10; }
+  if (outcome === "fail"){ moneyMul = 0.25; gainMul2 *= 0.25; fatMul2 = 1.20; }
+
+  const moneyGain = Math.floor(baseMoney * moneyMul);
+  state.money += moneyGain;
+
+  const addStat = (key, val) => { state[key] = clamp(state[key] + val, 0, key==="vo2" ? 75 : 100); };
+
+  addStat(track.main, growthMain * gainMul2);
+  addStat(track.alt,  growthAlt  * gainMul2);
+  addStat("recovery", growthRec  * gainMul2 * (trackId==="swim" ? 1.15 : 1.0)); // swim slightly recovery-friendly
+
+  state.fatigue = clamp(state.fatigue + baseFat * fatMul2, 0, fatigueMax());
+
+  // track clears / unlock
+  const info = state.track[trackId];
+  if (outcome === "great" || outcome === "success"){
+    info.clears[level-1] = (info.clears[level-1] || 0) + 1;
+    if (level === info.unlockedLevel && level < 10 && info.clears[level-1] >= 1){
+      info.unlockedLevel = level + 1;
+      el.hint.textContent = `${track.icon} ${track.name} Lv${level} cleared! Unlocked Lv${level+1}. +$${moneyGain}`;
+    }else{
+      el.hint.textContent = `${track.icon} ${track.name} Lv${level} ${outcome}. +$${moneyGain}`;
+    }
+  }else{
+    el.hint.textContent = `${track.icon} ${track.name} Lv${level} ${outcome}. +$${moneyGain}`;
+  }
+
   save();
-  render();
+  return true;
+}
+
+/** ---------------- Sponsor ---------------- */
+const SPONSOR_STEPS = [
+  2*60*1000,
+  5*60*1000,
+  10*60*1000,
+  30*60*1000,
+  60*60*1000,
+];
+
+function sponsorCooldownMs(){
+  return SPONSOR_STEPS[Math.min(state.sponsorStep, SPONSOR_STEPS.length-1)];
+}
+function sponsorReward(){
+  // mild reward that scales with readiness a bit
+  const r = readiness();
+  return Math.floor(25 + r*60 + state.day*0.6);
+}
+function doSponsor(){
+  const t = now();
+  if (t < (state.sponsorReadyAt || 0)){
+    el.hint.textContent = "Sponsor not ready yet.";
+    return;
+  }
+  const gain = sponsorReward();
+  state.money += gain;
+  state.sponsorStep = (state.sponsorStep || 0) + 1;
+  state.sponsorReadyAt = t + sponsorCooldownMs();
+  el.hint.textContent = `Sponsor secured: +$${gain}. Next cooldown longer.`;
+  save();
+}
+
+/** ---------------- Races ---------------- */
+const RACES = [
+  { id:"5k",  name:"5K",  icon:"🏁", km:5,    req:{vo2:26, endurance:8},  fatigue:28, prize:70 },
+  { id:"10k", name:"10K", icon:"🏁", km:10,   req:{vo2:28, endurance:12}, fatigue:40, prize:110 },
+  { id:"hm",  name:"Half Marathon", icon:"🏁", km:21.097, req:{vo2:32, endurance:22}, fatigue:58, prize:180 },
+  { id:"fm",  name:"Marathon", icon:"🏁", km:42.195, req:{vo2:36, endurance:35, recovery:18}, fatigue:78, prize:280 },
+];
+
+function canRace(race){
+  const s = effStats();
+  for (const k of Object.keys(race.req)){
+    if (s[k] < race.req[k]) return false;
+  }
+  return true;
+}
+
+function paceMinPerKm(){
+  const s = effStats();
+  // base pace: worst ~7.5, best ~3.4
+  const vo2Boost = (s.vo2 - 25) / 12; // ~0..4.2
+  const endBoost = s.endurance / 55;  // ~0..1.8
+  let pace = 7.6 - vo2Boost - endBoost;
+
+  // fatigue + condition
+  pace *= (1 + clamp(state.fatigue/240, 0, 0.55));
+  pace *= (1 - clamp(state.condition, -0.2, 0.2)*0.25);
+
+  return clamp(pace, 3.2, 9.0);
+}
+
+function startRace(raceId){
+  if (trainingInProgress()){
+    el.raceResult.textContent = "Stop training before racing.";
+    return;
+  }
+  const race = RACES.find(r=>r.id===raceId);
+  if (!race) return;
+
+  if (!canRace(race)){
+    el.raceResult.textContent = "Not ready: meet minimum stat requirements first.";
+    return;
+  }
+
+  const r = readiness();
+  const p = clamp(0.35 + (r - 0.45) * 1.6, 0.10, 0.95); // chance of strong result
+  const roll = rand01();
+
+  // time estimation
+  const pace = paceMinPerKm();
+  let timeMin = pace * race.km;
+
+  // performance noise
+  const perf = (roll < p ? 1 - rand01()*0.04 : 1 + rand01()*0.08);
+  timeMin *= perf;
+
+  // rank by time thresholds relative to a "par" time from readiness
+  const par = (8.6 - r*4.5) * race.km; // lower is better
+  const ratio = timeMin / par;
+
+  let grade = "C";
+  if (ratio < 0.88) grade = "S";
+  else if (ratio < 0.96) grade = "A";
+  else if (ratio < 1.04) grade = "B";
+  else if (ratio < 1.12) grade = "C";
+  else grade = "D";
+
+  // prize scaling
+  const prizeMul = ({S:1.35,A:1.20,B:1.05,C:0.85,D:0.60})[grade];
+  const moneyGain = Math.floor(race.prize * prizeMul);
+  state.money += moneyGain;
+
+  // fatigue hit big
+  state.fatigue = clamp(state.fatigue + race.fatigue, 0, fatigueMax());
+
+  // small stat gains
+  const add = (k,v)=> state[k] = clamp(state[k]+v, 0, k==="vo2"?75:100);
+  add("vo2", 0.12 + race.km*0.006);
+  add("endurance", 0.18 + race.km*0.010);
+  add("recovery", 0.10 + race.km*0.004);
+
+  const hh = Math.floor(timeMin/60);
+  const mm = Math.floor(timeMin%60);
+  const timeStr = hh>0 ? `${hh}h ${mm}m` : `${mm}m ${Math.round((timeMin-mm)*60)}s`;
+
+  el.raceResult.textContent =
+    `${race.name} result: Grade ${grade}. Time ~ ${timeStr}. +$${moneyGain}. Fatigue +${race.fatigue}.`;
+
+  save();
 }
 
 /** ---------------- Shop ---------------- */
-function buyItem(id) {
-  const item = SHOP_ITEMS.find(x => x.id === id);
+function buyItem(itemId){
+  const item = SHOP_ITEMS.find(x=>x.id===itemId);
   if (!item) return;
-
-  if (state.money < item.price) {
-    el.hint.textContent = "金錢不夠。";
+  if (state.owned[itemId]){
+    el.hint.textContent = "Already owned.";
     return;
   }
-
-  // equip rule: same slot replace if better; we just replace directly
+  if (state.money < item.price){
+    el.hint.textContent = "Not enough money.";
+    return;
+  }
   state.money -= item.price;
-  state.owned[item.slot] = item.id;
-
-  el.hint.textContent = `🛒 已購買並裝備：${item.name}`;
+  state.owned[itemId] = true;
+  el.hint.textContent = `Bought: ${item.name}.`;
   save();
-  renderShop();
-  render();
 }
-
-function slotLabel(slot) {
-  switch(slot){
-    case "shoes": return "鞋子";
-    case "clothes": return "衣服";
-    case "towel": return "毛巾";
-    case "goggles": return "眼鏡";
-    default: return slot;
+function equipItem(itemId){
+  const item = SHOP_ITEMS.find(x=>x.id===itemId);
+  if (!item) return;
+  if (!state.owned[itemId]){
+    el.hint.textContent = "Buy it first.";
+    return;
   }
+  state.equipped[item.slot] = itemId;
+  el.hint.textContent = `Equipped: ${item.name}.`;
+  save();
+}
+function unequip(slot){
+  state.equipped[slot] = null;
+  el.hint.textContent = `Unequipped ${slot}.`;
+  save();
 }
 
-function equippedSummaryText() {
-  const parts = [];
-  for (const slot of ["shoes", "clothes", "towel", "goggles"]) {
-    const id = state.owned[slot];
+/** ---------------- Offline progress ---------------- */
+function offlineProgress(){
+  const t = now();
+  const dt = clamp(t - (state.lastSeen || t), 0, OFFLINE_CAP_MS);
+  if (dt <= 0) return;
+
+  // fatigue recovery during offline
+  const dec = fatigueRegenPerSec() * (dt/1000);
+  state.fatigue = clamp(state.fatigue - dec, 0, fatigueMax());
+
+  // if training finished while offline, resolve once
+  if (state.training && state.training.endAt <= t){
+    resolveTrainingIfDone(); // uses current now; ok
+  }
+
+  state.lastSeen = t;
+}
+
+/** ---------------- Rendering ---------------- */
+function tagForProb(p){
+  if (p >= 0.75) return { cls:"good", text:`High ${Math.round(p*100)}%` };
+  if (p >= 0.45) return { cls:"mid",  text:`Mid ${Math.round(p*100)}%` };
+  return { cls:"bad", text:`Low ${Math.round(p*100)}%` };
+}
+
+function trainingProb(trackId, level){
+  const req = levelReq(level);
+  const { successAdd } = appliedDaily(trackId);
+  const r = readiness();
+  let p = 0.15 + (r - req) * 1.25;
+  p = clamp(p + successAdd, 0.05, 0.92);
+  return p;
+}
+
+function renderDaily(){
+  el.dailyMods.innerHTML = "";
+  for (const d of state.dailyMods){
+    const li = document.createElement("li");
+    li.className = "modItem";
+    li.innerHTML = `<b>${d.title}</b><div class="muted">${d.text}</div>`;
+    el.dailyMods.appendChild(li);
+  }
+  el.nextDaily.textContent = msToClock(state.nextDailyAt - now());
+}
+
+function renderStats(){
+  const s = effStats();
+  el.money.textContent = Math.floor(state.money);
+  if (el.money2) el.money2.textContent = Math.floor(state.money);
+
+  el.day.textContent = state.day;
+
+  el.vo2.textContent = fmt1(state.vo2);
+  el.endurance.textContent = fmt1(state.endurance);
+  el.strength.textContent = fmt1(state.strength);
+  el.recovery.textContent = fmt1(state.recovery);
+
+  el.vo2Eff.textContent = fmt1(s.vo2);
+  el.endEff.textContent = fmt1(s.endurance);
+  el.strEff.textContent = fmt1(s.strength);
+  el.recEff.textContent = fmt1(s.recovery);
+
+  el.readiness.textContent = fmt2(readiness());
+  if (el.readiness2) el.readiness2.textContent = fmt2(readiness());
+
+  el.fatigue.textContent = Math.floor(state.fatigue);
+  const fatPct = clamp(state.fatigue / fatigueMax(), 0, 1) * 100;
+  el.fatigueBar.style.width = `${fatPct}%`;
+
+  // condition displayed as -15..+15
+  const condPct = clamp((state.condition + 0.20) / 0.40, 0, 1) * 100;
+  el.condition.textContent = fmt2(state.condition);
+  el.conditionBar.style.width = `${condPct}%`;
+
+  // equipped summary
+  const sum = [];
+  for (const slot of ["shoes","top","towel","poles"]){
+    const id = state.equipped[slot];
     if (!id) continue;
-    const item = SHOP_ITEMS.find(x => x.id === id);
-    if (!item) continue;
-    parts.push(`${slotLabel(slot)}：${item.name}`);
+    const item = SHOP_ITEMS.find(x=>x.id===id);
+    if (item) sum.push(item.name);
   }
-  return parts.length ? parts.join(" / ") : "尚未裝備任何東西。";
+  el.equippedSummary.textContent = sum.length ? sum.join(" • ") : "—";
 }
 
-function renderShop() {
-  if (!el.shopList) return;
+function renderTrack(){
+  const runner = el.trackRunner;
+  const fill = el.trackFill;
 
-  el.shopList.innerHTML = "";
-  for (const item of SHOP_ITEMS) {
-    const owned = state.owned[item.slot] === item.id;
+  if (state.training){
+    const total = state.training.endAt - state.training.startedAt;
+    const done = clamp((now() - state.training.startedAt) / total, 0, 1);
+    const pct = done * 100;
+    fill.style.width = `${pct}%`;
+    runner.style.left = `calc(${pct}% - 6px)`;
+    runner.classList.toggle("running", true);
 
+    const track = TRACKS.find(t=>t.id===state.training.trackId);
+    el.nowState.textContent = `${track.icon} ${track.name} Lv${state.training.level}`;
+    el.trainingETA.textContent = msToClock(trainingRemainingMs());
+  }else{
+    fill.style.width = "0%";
+    runner.style.left = "0%";
+    runner.classList.toggle("running", false);
+    el.nowState.textContent = "Idle";
+    el.trainingETA.textContent = "—";
+  }
+}
+
+function renderTraining(){
+  const remaining = trainingRemainingMs();
+  el.trainingCountdown.textContent = state.training ? msToClock(remaining) : "—";
+
+  el.trainingCards.innerHTML = "";
+  for (const t of TRACKS){
+    const info = state.track[t.id];
+    const card = document.createElement("div");
+    card.className = "trainCard";
+
+    const lockedNote = `Unlocked: Lv${info.unlockedLevel}/10`;
+    card.innerHTML = `
+      <div class="trainTop">
+        <div>
+          <div class="trainName">${t.icon} ${t.name}</div>
+          <div class="small">${lockedNote}</div>
+        </div>
+      </div>
+      <div class="trainMeta">
+        <div><span class="muted">Main</span><div><b>${t.main}</b></div></div>
+        <div><span class="muted">Alt</span><div><b>${t.alt}</b></div></div>
+      </div>
+      <div class="divider"></div>
+      <div class="trainActions" id="btns_${t.id}"></div>
+    `;
+    el.trainingCards.appendChild(card);
+
+    const btns = card.querySelector(`#btns_${t.id}`);
+    for (let lv=1; lv<=10; lv++){
+      const b = document.createElement("button");
+      b.className = "btn";
+      b.textContent = `Lv${lv}`;
+      const locked = lv > info.unlockedLevel;
+      if (locked) b.disabled = true;
+
+      // add a tag-like title for probability
+      const p = trainingProb(t.id, lv);
+      const tag = tagForProb(p);
+      b.title = `Chance ${Math.round(p*100)}% • Dur ${msToClock(levelDurationMs(lv))}`;
+
+      b.addEventListener("click", ()=>startTraining(t.id, lv));
+      btns.appendChild(b);
+    }
+
+    // add summary line
+    const sum = document.createElement("div");
+    sum.className = "small";
+    sum.style.marginTop = "10px";
+    const lastClear = info.clears.map((c,i)=>c>0?`Lv${i+1}✓`:null).filter(Boolean).slice(-3).join(" ");
+    sum.innerHTML = `<span class="muted">Clears:</span> ${lastClear || "—"}`;
+    card.appendChild(sum);
+  }
+}
+
+function renderRaces(){
+  el.raceCards.innerHTML = "";
+  for (const r of RACES){
+    const card = document.createElement("div");
+    card.className = "raceCard";
+
+    const ok = canRace(r);
+    const reqLines = Object.entries(r.req).map(([k,v])=>`${k} ≥ ${v}`).join(", ");
+
+    card.innerHTML = `
+      <div class="raceTitle">
+        <div class="raceName">${r.icon} ${r.name}</div>
+        <span class="tag ${ok ? "good":"bad"}">${ok ? "Eligible":"Locked"}</span>
+      </div>
+      <div class="raceMeta">
+        <div><span class="muted">Distance</span><div><b>${fmt1(r.km)} km</b></div></div>
+        <div><span class="muted">Prize</span><div><b>$${r.prize}</b></div></div>
+        <div><span class="muted">Req</span><div><b>${reqLines}</b></div></div>
+        <div><span class="muted">Fatigue</span><div><b>+${r.fatigue}</b></div></div>
+      </div>
+      <div class="raceActions">
+        <button class="btn primary" id="race_${r.id}">Race</button>
+      </div>
+    `;
+    el.raceCards.appendChild(card);
+    const btn = card.querySelector(`#race_${r.id}`);
+    btn.disabled = !ok || trainingInProgress();
+    btn.addEventListener("click", ()=>startRace(r.id));
+  }
+}
+
+function renderShop(){
+  el.shopGrid.innerHTML = "";
+  for (const item of SHOP_ITEMS){
     const card = document.createElement("div");
     card.className = "shopItem";
 
-    const top = document.createElement("div");
-    top.className = "shopTop";
+    const owned = !!state.owned[item.id];
+    const equipped = state.equipped[item.slot] === item.id;
 
-    const name = document.createElement("div");
-    name.className = "shopName";
-    name.textContent = item.name;
+    card.innerHTML = `
+      <div class="shopTop">
+        <div>
+          <div class="shopName">${item.name}</div>
+          <div class="small">${item.slot.toUpperCase()} • $${item.price}</div>
+        </div>
+        <span class="tag ${equipped ? "good" : owned ? "mid" : ""}">${equipped ? "Equipped" : owned ? "Owned" : "—"}</span>
+      </div>
+      <div class="shopDesc">${item.desc}</div>
+      <div class="shopActions">
+        <button class="btn secondary" id="buy_${item.id}">Buy</button>
+        <button class="btn primary" id="eq_${item.id}">Equip</button>
+      </div>
+    `;
+    el.shopGrid.appendChild(card);
 
-    const badge = document.createElement("span");
-    badge.className = "badge subtle";
-    badge.textContent = owned ? "已裝備" : slotLabel(item.slot);
+    const buyBtn = card.querySelector(`#buy_${item.id}`);
+    const eqBtn  = card.querySelector(`#eq_${item.id}`);
+    buyBtn.disabled = owned || state.money < item.price;
+    eqBtn.disabled = !owned || equipped;
 
-    top.appendChild(name);
-    top.appendChild(badge);
-
-    const meta = document.createElement("div");
-    meta.className = "shopMeta";
-    meta.textContent = item.desc;
-
-    const buyRow = document.createElement("div");
-    buyRow.className = "shopBuyRow";
-
-    const price = document.createElement("div");
-    price.className = "price";
-    price.textContent = `$${item.price}`;
-
-    const btn = document.createElement("button");
-    btn.textContent = owned ? "✅ 使用中" : "購買";
-    btn.disabled = owned || state.money < item.price;
-    btn.onclick = () => buyItem(item.id);
-
-    buyRow.appendChild(price);
-    buyRow.appendChild(btn);
-
-    card.appendChild(top);
-    card.appendChild(meta);
-    card.appendChild(buyRow);
-
-    el.shopList.appendChild(card);
+    buyBtn.addEventListener("click", ()=>buyItem(item.id));
+    eqBtn.addEventListener("click", ()=>equipItem(item.id));
   }
 
-  // owned list
-  if (el.ownedList) {
-    const lines = [];
-    for (const slot of ["shoes","clothes","towel","goggles"]) {
-      const id = state.owned[slot];
-      if (!id) continue;
-      const item = SHOP_ITEMS.find(x => x.id === id);
-      if (!item) continue;
-      lines.push(`• ${slotLabel(slot)}：${item.name}（${item.desc}）`);
-    }
-    el.ownedList.textContent = lines.length ? lines.join("\n") : "（尚未購買任何裝備）";
+  // quick unequip row
+  const extra = document.createElement("div");
+  extra.className = "shopItem";
+  extra.innerHTML = `
+    <div class="shopTop">
+      <div>
+        <div class="shopName">Unequip</div>
+        <div class="small">Remove equipment</div>
+      </div>
+    </div>
+    <div class="shopActions">
+      <button class="btn secondary" id="un_shoes">Shoes</button>
+      <button class="btn secondary" id="un_top">Top</button>
+      <button class="btn secondary" id="un_towel">Towel</button>
+      <button class="btn secondary" id="un_poles">Poles</button>
+    </div>
+  `;
+  el.shopGrid.appendChild(extra);
+  extra.querySelector("#un_shoes").onclick = ()=>unequip("shoes");
+  extra.querySelector("#un_top").onclick = ()=>unequip("top");
+  extra.querySelector("#un_towel").onclick = ()=>unequip("towel");
+  extra.querySelector("#un_poles").onclick = ()=>unequip("poles");
+}
+
+function renderSponsor(){
+  const t = now();
+  const readyAt = state.sponsorReadyAt || 0;
+  const disabled = t < readyAt;
+  el.quickCashBtn.disabled = disabled;
+  if (disabled){
+    el.quickCashBtn.textContent = `Get Sponsor (${msToClock(readyAt - t)})`;
+  }else{
+    el.quickCashBtn.textContent = "Get Sponsor";
   }
 }
 
-/** ---------------- Tabs ---------------- */
-function setTab(tab) {
-  const isHome = tab === "home";
-  el.pageHome.classList.toggle("hidden", !isHome);
-  el.pageShop.classList.toggle("hidden", isHome);
-
-  el.tabHome.classList.toggle("active", isHome);
-  el.tabShop.classList.toggle("active", !isHome);
-
-  if (!isHome) renderShop();
-}
-
-/** ---------------- Offline ---------------- */
-function offlineProgress() {
-  const now = Date.now();
-  const sec = Math.min((now - state.lastSeen) / 1000, 2 * 3600); // cap 2h
-  if (sec <= 0) return;
-
-  // simulate in small steps, without spawning new events offline (stability)
-  const savedEvent = state.event;
-  const savedNextEventAt = state.nextEventAt;
-  const savedNextEventType = state.nextEventType;
-
-  // lock events offline
-  state.event = null;
-  state.nextEventAt = now + 999999999;
-  state.nextEventType = null;
-
-  const step = 1.0;
-  let t = 0;
-  while (t < sec) {
-    const dt = Math.min(step, sec - t);
-    stepActivity(dt);
-    clamp();
-    t += dt;
-  }
-
-  // restore event schedule
-  state.event = savedEvent;
-  state.nextEventAt = savedNextEventAt || (Date.now() + 90_000);
-  state.nextEventType = savedNextEventType || pickEventType();
-
-  el.hint.textContent = `離線收益已結算（${Math.floor(sec/60)} 分鐘）`;
-}
-
-/** ---------------- Render ---------------- */
-function render() {
-  // money
-  el.points.textContent = Math.floor(state.money);
-
-  // track
-  el.lapMiles.textContent = state.lapMiles.toFixed(2);
-  el.lapTarget.textContent = state.lapTarget.toFixed(2);
-  el.totalMiles.textContent = state.totalMiles.toFixed(1);
-
-  const lapPct = Math.max(0, Math.min(1, state.lapMiles / state.lapTarget));
-  el.lapBar.style.width = (lapPct * 100).toFixed(1) + "%";
-
-  // runner position along track (0..100%)
-  // runner is absolutely positioned in trackLine; we map to %
-  el.runner.style.left = (lapPct * 100).toFixed(2) + "%";
-
-  // runner animation state (requires CSS .runner.running / .runner.resting)
-  if (el.runner) {
-    el.runner.classList.toggle("running", state.activity === "running");
-    el.runner.classList.toggle("resting", state.activity !== "running");
-  }
-  if (el.activity) {
-    el.activity.textContent = state.activity === "running" ? "🏃 跑步中" : "😴 休息中";
-  }
-
-  // activity badge
-  el.activity.textContent = state.activity === "running" ? "🏃 跑步中" : "😴 休息中";
-
-  // stats
-  el.energy.textContent = Math.floor(state.energy);
-  el.energyMax.textContent = state.energyMax;
-  el.health.textContent = Math.floor(state.health);
-
-  const ePct = state.energyMax > 0 ? (state.energy / state.energyMax) : 0;
-  el.energyBar.style.width = Math.max(0, Math.min(100, ePct * 100)).toFixed(1) + "%";
-
-  const hPct = Math.max(0, Math.min(1, state.health / state.healthCapUI));
-  el.healthBar.style.width = (hPct * 100).toFixed(1) + "%";
-
-  const c = cardioMult();
-  const r = recoveryMult();
-  el.cardio.textContent = c.toFixed(2);
-  el.recovery.textContent = r.toFixed(2);
-
-  el.speed.textContent = (milesPerSec() * 60).toFixed(2);
-  el.regen.textContent = energyRegenPerSec().toFixed(2);
-
-  // next unlock
-  const next = TRACK_UNLOCKS[state.trackLevel];
-  el.nextUnlockText.textContent = next ? `${next.miles} miles：${next.text}` : "已完成目前所有解鎖 ✅";
-
-  // sponsor
-  const now = Date.now();
-  const sLeft = state.sponsor.nextAt - now;
-  el.sponsorCountdown.textContent = fmtMMSS(sLeft);
-  el.sponsorNextCd.textContent = `${sponsorNextCooldownMinutes()} 分鐘`;
-  el.sponsorBtn.disabled = !canClaimSponsor();
-  el.sponsorStatus.textContent = canClaimSponsor() ? "可領取" : "冷卻中";
-
-  // equip summary
-  el.equipSummary.textContent = equippedSummaryText();
-
-  // events timeline + panel
-  el.nextEventName.textContent = state.nextEventType ? ({
-    tailwind: "🟢 順風日", bonus: "🟡 商業合作", rain: "🔵 下雨天", cramp: "🔴 抽筋警訊"
-  }[state.nextEventType] || "—") : "—";
-  el.nextEventCountdown.textContent = fmtMMSS(state.nextEventAt - now);
-  el.nextEventPlan.textContent = planText();
-
-  if (!state.event) {
-    el.eventPanel.classList.add("hidden");
-  } else {
-    el.eventPanel.classList.remove("hidden");
-    el.eventTitle.textContent = state.event.title;
-    el.eventType.textContent = state.event.accepted ? "進行中" : "可選擇";
-    el.eventDesc.textContent = state.event.desc;
-    el.eventFinePrint.textContent = state.event.tip + `（剩餘 ${fmtMMSS(state.event.endsAt - now)}）`;
-
-    el.acceptEventBtn.disabled = !!state.event.accepted;
-    el.skipEventBtn.disabled = !!state.event.accepted;
-  }
+function renderAll(){
+  renderStats();
+  renderDaily();
+  renderTrack();
+  renderTraining();
+  renderRaces();
+  renderShop();
+  renderSponsor();
 
   // buttons
-  el.workoutBtn.disabled = state.energy < 18;
-}
-
-/** small planner suggestion */
-function planText() {
-  // simple heuristic based on next event type + current energy
-  const e = state.energy / state.energyMax;
-  const type = state.nextEventType;
-
-  if (!type) return "—";
-  if (type === "rain") return e < 0.35 ? "先休息，等雨天buff回血" : "接受後更適合休息回血";
-  if (type === "tailwind") return e < 0.25 ? "先補體力，別浪費順風" : "保持跑步，推進里程";
-  if (type === "cramp") return e > 0.60 ? "可接受但注意疲勞" : "偏向休息避免拖慢";
-  return e > 0.45 ? "可考慮接受" : "太累可跳過";
+  el.stopTrainingBtn.disabled = !state.training;
 }
 
 /** ---------------- Main loop ---------------- */
 let last = performance.now();
-function tick(now) {
-  const dt = Math.min((now - last) / 1000, 0.25);
-  last = now;
+function tick(ts){
+  const dt = clamp((ts - last)/1000, 0, 0.25);
+  last = ts;
 
-  updateEventLifecycle();
-  stepActivity(dt);
+  // fatigue recovery over time
+  state.fatigue = clamp(state.fatigue - fatigueRegenPerSec()*dt, 0, fatigueMax());
 
-  clamp();
-  render();
+  // daily rollover
+  if (now() >= state.nextDailyAt){
+    rollDaily();
+    el.hint.textContent = `New day rolled. Condition is now ${fmt2(state.condition)}.`;
+  }
 
+  // training resolution
+  resolveTrainingIfDone();
+
+  renderAll();
   requestAnimationFrame(tick);
 }
 
-/** ---------------- Wire ---------------- */
-function init() {
-  // tabs
-  el.tabHome.onclick = () => setTab("home");
-  el.tabShop.onclick = () => setTab("shop");
-
-  // actions
-  el.workoutBtn.onclick = workout;
-  el.restBtn.onclick = restNap;
-
-  // sponsor
-  el.sponsorBtn.onclick = claimSponsor;
-
-  // events
-  el.acceptEventBtn.onclick = acceptEvent;
-  el.skipEventBtn.onclick = skipEvent;
-
-  // initial schedule
-  if (!state.nextEventType) state.nextEventType = pickEventType();
-  if (!state.nextEventAt) scheduleNextEvent();
-  if (!state.sponsor.nextAt) state.sponsor.nextAt = Date.now();
-
-  // autosave
-  setInterval(save, 10_000);
-  window.addEventListener("beforeunload", save);
-}
-
-/** ---------------- Boot ---------------- */
+/** ---------------- Init & bindings ---------------- */
 load();
+ensureDaily();
 offlineProgress();
-init();
-render();
+
+// default: own first-tier items? (starter pack) – cheap, optional
+// state.owned["shoes_1"] = true;
+
+el.stopTrainingBtn.onclick = stopTraining;
+el.restBtn.onclick = restBreak;
+el.quickCashBtn.onclick = doSponsor;
+
+el.exportBtn.onclick = exportSave;
+el.importBtn.onclick = importSave;
+el.resetBtn.onclick = resetSave;
+
+setInterval(save, 10000);
+window.addEventListener("beforeunload", save);
+
+renderAll();
 requestAnimationFrame(tick);
 
-// debug helper
-window.resetGame = () => { localStorage.removeItem(SAVE_KEY); location.reload(); };
+// debug helpers
+window.resetGame = resetSave;
 window.state = state;
-window.BUILD = BUILD;
