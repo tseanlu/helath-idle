@@ -1,24 +1,25 @@
-const SAVE_KEY="training_idle_v2_0";
+const SAVE_KEY="training_idle_v2_3";
 const TRACKS=[{id:"run",name:"Run",icon:"🏃",main:"vo2",alt:"endurance"},{id:"bike",name:"Bike",icon:"🚴",main:"endurance",alt:"technique"},{id:"swim",name:"Swim",icon:"🏊",main:"recovery",alt:"endurance"},{id:"hike",name:"Hike",icon:"⛰️",main:"strength",alt:"endurance"}];
 const RACES={"5k":{name:"5K",km:5,focus:"speed"},"10k":{name:"10K",km:10,focus:"steady"},"hm":{name:"Half",km:21.1,focus:"endurance"},"fm":{name:"Marathon",km:42.2,focus:"endurance"}};
 const FORM=[{emoji:"😫",mult:.90,color:"bad"},{emoji:"😐",mult:1.00,color:"warn"},{emoji:"🙂",mult:1.06,color:"good"},{emoji:"🔥",mult:1.12,color:"good"}];
 
-const state={money:0,energy:70,energyMax:100,fitness:1,formIdx:2,
+const state={money:0,rankPoints:0,energy:70,energyMax:100,fitness:1,formIdx:2,
   vo2:25,endurance:8,strength:6,recovery:8,technique:5,
-  unlocked:{run:1,bike:1,swim:1,hike:1},gear:{shoes:0,goggles:0,towel:0,windbreaker:0},
+  unlocked:{run:1,bike:1,swim:1,hike:1},
+  queue:[],lastGains:null,gear:{shoes:0,goggles:0,towel:0,windbreaker:0},
   autoRepeat:true,training:null,lastOutcome:null,overlayUntil:0,lastSeen:Date.now()
 };
 
 const $=id=>document.getElementById(id);
 const el={
-  energyBar:$("energyBar"),energyText:$("energyText"),fitnessText:$("fitnessText"),formText:$("formText"),moneyText:$("moneyText"),
+  energyBar:$("energyBar"),energyText:$("energyText"),fitnessText:$("fitnessText"),formText:$("formText"),moneyText:$("moneyText"),rankText:$("rankText"),
   trackFill:$("trackFill"),runner:$("runner"),stageMode:$("stageMode"),stageNow:$("stageNow"),stagePct:$("stagePct"),
   stageOverlay:$("stageOverlay"),confetti:$("confetti"),
   fxLayer:$("fxLayer"),
   lane:document.querySelector(".lane"),
   tabs:[...document.querySelectorAll(".tabBtn")],
   panels:{training:$("tab-training"),race:$("tab-race"),shop:$("tab-shop"),settings:$("tab-settings")},
-  tracks:$("tracks"),levels:$("levels"),selectedText:$("selectedText"),startBtn:$("startBtn"),hint:$("hint"),
+  tracks:$("tracks"),levels:$("levels"),selectedText:$("selectedText"),startBtn:$("startBtn"),clearQueueBtn:$("clearQueueBtn"),queueList:$("queueList"),queueHint:$("queueHint"),gainMoney:$("gainMoney"),gainMain:$("gainMain"),gainAlt:$("gainAlt"),gainRank:$("gainRank"),gainMainName:$("gainMainName"),gainAltName:$("gainAltName"),hint:$("hint"),
   autoRepeatToggle:$("autoRepeatToggle"),
   raceCards:[...document.querySelectorAll(".raceCard")],raceBtn:$("raceBtn"),raceResult:$("raceResult"),
   shopGrid:$("shopGrid"),
@@ -35,18 +36,37 @@ const fmt0=n=>Math.floor(n).toString();
 const msToClock=ms=>{const s=Math.max(0,Math.floor(ms/1000));const m=Math.floor(s/60);const r=s%60;return m>0?`${m}m ${r}s`:`${r}s`;};
 
 function energyRegenPerSec(){const gear=1+state.gear.towel*.03+state.gear.windbreaker*.01;return(.45+state.recovery*.018)*gear;}
-function trainingCostEnergy(lv){const gear=1-state.gear.shoes*.02;return Math.max(6,Math.floor((8+lv*3)*gear));}
-function levelDurationMs(lv){return(18+lv*7)*1000;}
+function trainingCostEnergy(lv){
+  // 成本也要有坡度：Lv7+ 明顯更累
+  // 鞋子：最多 -12% 體力消耗（避免裝備爆炸）
+  const shoesLvl = (state.gear && typeof state.gear.shoes==="number") ? state.gear.shoes : 0;
+  const gearMul = 1 - Math.min(0.12, shoesLvl * 0.01);
+  const base = 10 + lv*3 + Math.max(0, lv-6)*2;
+  return Math.max(8, Math.floor(base * gearMul));
+}
+function levelDurationMs(lv){
+  // 時間也有坡度：後期明顯更長（逼玩家做取捨）
+  const sec = 22 + lv*7 + Math.max(0, lv-6)*6;
+  return sec * 1000;
+}
 function baseMoneyReward(lv){return Math.floor(6+lv*4.5);}
 function trainingSuccessProb(trackId,lv){
+  // 曲線需求：前期好過、後期陡升（需要綜合能力）
   const t=TRACKS.find(x=>x.id===trackId);
-  const main=state[t.main],alt=state[t.alt],fit=state.fitness;
-  const skill=main*.85+alt*.45+fit*.25;
-  const req=20+lv*9;
-  let p=1/(1+Math.exp(-(skill-req)/6.5));
-  p=clamp(p,.05,.95);
-  p*=FORM[state.formIdx].mult;
-  return clamp(p,.03,.97);
+  const main=state[t.main], alt=state[t.alt];
+  const form=FORM[state.formIdx].mult;
+
+  // requirement curve (front-flat, back-steep)
+  const req = 22 + lv*12 + Math.pow(Math.max(0, lv-5), 2) * 2;
+
+  // effective power: main matters most, alt supports; fitness acts as global "base"
+  const power = (main*0.92 + alt*0.55 + state.fitness*0.22) * form;
+
+  // Map power vs req into probability band
+  const ratio = power / Math.max(1, req);
+  // center ~0.65 at ratio=1; steeper around threshold
+  const p = clamp(0.08 + 0.92*(1/(1+Math.exp(-7*(ratio-1)))), 0.02, 0.98);
+  return p;
 }
 function computeFitness(){
   const base=state.vo2*1.2+state.endurance*1.0+state.strength*.8+state.recovery*.7+state.technique*.6;
@@ -242,7 +262,7 @@ function renderHUD(){
   const e=clamp(state.energy,0,state.energyMax);
   el.energyText.textContent=fmt0(e);
   el.energyBar.style.width=`${Math.floor((e/state.energyMax)*100)}%`;
-  el.moneyText.textContent=fmt0(state.money);
+  el.moneyText.textContent=Math.floor(state.money); if(el.rankText) el.rankText.textContent=Math.floor(state.rankPoints);
   el.fitnessText.textContent=fmt0(state.fitness);
   el.formText.textContent=FORM[state.formIdx].emoji;
 }
@@ -263,8 +283,9 @@ function resolveTraining(){
   const p=trainingSuccessProb(trackId,lv);
   const roll=rand01();
 
+  // 4-tier outcome
   let grade="fail";
-  const perfectGate = clamp(p*0.20*(state.formIdx>=2?1.15:0.85),0.02,0.22);
+  const perfectGate = clamp(p*0.18*(state.formIdx>=2?1.12:0.88),0.02,0.20);
   const barelyGate  = clamp(p + 0.10,0.05,0.98);
 
   if(roll < perfectGate) grade="perfect";
@@ -274,23 +295,39 @@ function resolveTraining(){
 
   const t=TRACKS.find(x=>x.id===trackId);
 
+  // Money reward (keep motivating, but not runaway)
   const moneyBase = baseMoneyReward(lv);
-  const moneyMul = grade==="perfect"?1.35 : grade==="success"?1.00 : grade==="barely"?0.65 : 0.20;
-  const moneyGain = Math.floor(moneyBase * moneyMul);
+  const moneyMul = grade==="perfect"?0.55 : grade==="success"?0.40 : grade==="barely"?0.25 : 0.05;
+  const moneyGain = Math.max(1, Math.floor(moneyBase * moneyMul));
   state.money += moneyGain;
 
-  const gainBase = 0.55 + lv*0.22;
-  const gainMul = grade==="perfect"?1.30 : grade==="success"?1.00 : grade==="barely"?0.75 : 0.35;
+  // Growth: front-fast, later still meaningful but slower; FAIL gives very little
+  const gainBase = 0.45 + lv*0.16;
+  const gainMul  = grade==="perfect"?1.30 : grade==="success"?1.00 : grade==="barely"?0.70 : 0.15;
+
   state[t.main] += gainBase*1.00*gainMul;
   state[t.alt]  += gainBase*0.55*gainMul;
 
+  // Unlock progression: require SUCCESS+; PERFECT feels great but doesn't skip levels
   if(grade==="perfect" || grade==="success"){
     const cleared=state.unlocked[trackId]||1;
     if(lv===cleared+1) state.unlocked[trackId]=cleared+1;
   }
 
   state.fitness = computeFitness();
+  // record last gains (for UI)
+  state.lastGains={
+    type:"training",
+    trackId:trackId,level:lv,grade:grade,
+    money:moneyGain,
+    mainKey:t.main,altKey:t.alt,
+    mainDelta:gainBase*1.00*gainMul,
+    altDelta:gainBase*0.55*gainMul,
+    rank:0
+  };
 
+
+  // Feedback
   if(grade==="perfect"){
     setOverlay("PERFECT!!","perfect"); spawnConfetti(2);
     toast(`PERFECT! +$${moneyGain}`);
@@ -307,12 +344,13 @@ function resolveTraining(){
 
   state.training=null;
 
+  // auto repeat
   if(state.autoRepeat){
     const nextLv=Math.min(lv,(state.unlocked[trackId]||1)+1);
     if(state.energy>=trainingCostEnergy(nextLv)) startTraining(trackId,nextLv);
   }
 
-  save(); renderAll(); return true;
+  tryStartNextFromQueue(); save(); renderAll(); return true;
 }
 
 function raceDurationMs(raceId){const km=RACES[raceId].km; return Math.floor((14+km*2.2)*1000);}
@@ -340,8 +378,23 @@ function resolveRace(){
   const prize=Math.max(10,Math.floor(25+placePct*140+r.km*2));
 
   state.money += prize;
+  // Rank points: main reason to race (unlocks better events / items)
+  const rp = Math.max(1, Math.floor(4 + placePct*22 + r.km*0.6));
+  state.rankPoints += rp;
+
   state.technique += 0.4 + placePct*0.8;
   state.fitness = computeFitness();
+  // record last gains (for UI)
+  state.lastGains={
+    type:"training",
+    trackId:trackId,level:lv,grade:grade,
+    money:moneyGain,
+    mainKey:t.main,altKey:t.alt,
+    mainDelta:gainBase*1.00*gainMul,
+    altDelta:gainBase*0.55*gainMul,
+    rank:0
+  };
+
 
   let grade="fail";
   let text="SURVIVED";
@@ -357,7 +410,7 @@ function resolveRace(){
   el.raceResult.textContent=`${r.name}: Rank #${rank} / ${field} • Prize +$${prize}`;
   state.training=null;
 
-  save(); renderAll(); return true;
+  tryStartNextFromQueue(); save(); renderAll(); return true;
 }
 
 function renderRace(){
@@ -369,11 +422,13 @@ let toastTimer=null;
 function toast(msg){
   el.hint.textContent=msg;
   if(toastTimer) clearTimeout(toastTimer);
-  toastTimer=setTimeout(()=>{el.hint.textContent="Tip: Aim for PERFECT!! — higher level clears grow faster.";},2600);
+  toastTimer=setTimeout(()=>{el.hint.textContent="Tip: Lv1-3 easy. Lv7+ needs balanced stats. Aim for PERFECT!!";},2600);
 }
 
 function renderAll(){
-  renderHUD(); renderStage();
+  renderHUD();
+  renderQueue();
+  renderGains(); renderStage();
   renderTracks(); renderLevels(); renderSelected();
   renderShop(); renderRace(); renderDebug();
 }

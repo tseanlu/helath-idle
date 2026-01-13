@@ -312,3 +312,19 @@ p{margin:0}
 .stageOverlay.success{letter-spacing:.10em}
 .stageOverlay.barely{letter-spacing:.12em}
 .stageOverlay.fail{letter-spacing:.16em}
+
+
+/* ===== Queue + Gains ===== */
+.levelBtns{display:flex;gap:10px;align-items:center}
+.queuePanel{margin-top:12px;padding:12px;border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06)}
+.queueHead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.queueList{display:flex;flex-direction:column;gap:8px;min-height:42px}
+.queueItem{display:flex;justify-content:space-between;align-items:center;padding:10px 10px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05)}
+.queueItem .qL{display:flex;gap:8px;align-items:center}
+.queueItem .qTag{font-size:12px;padding:2px 8px;border-radius:999px;background:rgba(96,165,250,.14);border:1px solid rgba(96,165,250,.18)}
+.queueItem button{padding:6px 10px;border-radius:10px}
+.gainPanel{margin-top:12px;padding:12px;border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06)}
+.gainTitle{font-weight:800;margin-bottom:8px}
+.gainRow{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(255,255,255,.06)}
+.gainRow:first-of-type{border-top:none}
+.gainRow b{font-variant-numeric:tabular-nums}

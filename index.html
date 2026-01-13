@@ -41,6 +41,10 @@
             <div class="hudK">Money</div>
             <div class="hudV big">$<b id="moneyText">0</b></div>
           </div>
+          <div class="hudPill">
+            <div class="hudK">Rank</div>
+            <div class="hudV big"><b id="rankText">0</b></div>
+          </div>
         </div>
       </div>
 
@@ -100,13 +104,31 @@
               <div class="muted small">Selected</div>
               <div class="strong" id="selectedText">—</div>
             </div>
-            <button class="btn primary" id="startBtn" disabled>Start</button>
+            <div class="levelBtns">
+              <button class="btn" id="clearQueueBtn" title="Clear queue">Clear Queue</button>
+              <button class="btn primary" id="startBtn" disabled>Start / Queue</button>
+            </div>
           </div>
 
-          <div class="levels" id="levels"></div>
+          <div class="queuePanel">
+  <div class="queueHead">
+    <div class="strong">Queue</div>
+    <div class="muted small" id="queueHint">Add up to 5 sessions.</div>
+  </div>
+  <div class="queueList" id="queueList"></div>
+</div>
+
+<div class="levels" id="levels"></div>
         </div>
 
-        <div class="hint" id="hint">Tip: Clear higher levels for faster growth and better races.</div>
+        <div class="gainPanel" id="gainPanel">
+  <div class="gainTitle">Last Result</div>
+  <div class="gainRow"><span class="muted">Money</span><b id="gainMoney">—</b></div>
+  <div class="gainRow"><span class="muted" id="gainMainName">Main</span><b id="gainMain">—</b></div>
+  <div class="gainRow"><span class="muted" id="gainAltName">Alt</span><b id="gainAlt">—</b></div>
+  <div class="gainRow"><span class="muted">Rank</span><b id="gainRank">—</b></div>
+</div>
+<div class="hint" id="hint">Tip: Lv1-3 easy. Lv7+ needs balanced stats. Aim for PERFECT!!</div>
       </section>
 
       <!-- RACE -->
