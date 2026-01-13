@@ -14,6 +14,8 @@ const el={
   energyBar:$("energyBar"),energyText:$("energyText"),fitnessText:$("fitnessText"),formText:$("formText"),moneyText:$("moneyText"),
   trackFill:$("trackFill"),runner:$("runner"),stageMode:$("stageMode"),stageNow:$("stageNow"),stagePct:$("stagePct"),
   stageOverlay:$("stageOverlay"),confetti:$("confetti"),
+  fxLayer:$("fxLayer"),
+  lane:document.querySelector(".lane"),
   tabs:[...document.querySelectorAll(".tabBtn")],
   panels:{training:$("tab-training"),race:$("tab-race"),shop:$("tab-shop"),settings:$("tab-settings")},
   tracks:$("tracks"),levels:$("levels"),selectedText:$("selectedText"),startBtn:$("startBtn"),hint:$("hint"),
@@ -65,6 +67,27 @@ function offlineProgress(){const sec=clamp((now()-state.lastSeen)/1000,0,12*3600
 function tabTo(id){
   for(const b of el.tabs) b.classList.toggle("active",b.dataset.tab===id);
   for(const k of Object.keys(el.panels)) el.panels[k].classList.toggle("active",k===id);
+}
+
+
+function ensureFX(kind){
+  if(!el.fxLayer) return;
+  el.fxLayer.innerHTML = kind ? `<div class="fx ${kind} show"></div>` : "";
+}
+function runnerEmojiFor(kind){
+  switch(kind){
+    case "swim": return "🏊";
+    case "bike": return "🚴";
+    case "hike": return "🥾";
+    default: return "🏃";
+  }
+}
+function applyFormPose(){
+  el.runner.classList.remove("fire","good","neutral","tired");
+  if(state.formIdx===3) el.runner.classList.add("fire");
+  else if(state.formIdx===2) el.runner.classList.add("good");
+  else if(state.formIdx===1) el.runner.classList.add("neutral");
+  else el.runner.classList.add("tired");
 }
 
 function pctClass(p){return p>=.70?"good":p>=.45?"warn":"bad";}
@@ -135,21 +158,38 @@ function renderDebug(){
   },null,2);
 }
 
-function setOverlay(text,kind){
+function setOverlay(text,grade){
+  // grade: perfect | success | barely | fail
   el.stageOverlay.classList.remove("hidden");
   el.stageOverlay.classList.add("show");
   el.stageOverlay.textContent=text;
-  el.stageOverlay.style.color=kind==="good"?"rgba(34,197,94,.95)":kind==="warn"?"rgba(251,191,36,.98)":"rgba(248,113,113,.98)";
-  state.overlayUntil=now()+900;
+
+  el.stageOverlay.classList.remove("perfect","success","barely","fail");
+  if(grade) el.stageOverlay.classList.add(grade);
+
+  const color = grade==="perfect" ? "rgba(251,191,36,.98)"
+              : grade==="success" ? "rgba(34,197,94,.95)"
+              : grade==="barely"  ? "rgba(251,191,36,.98)"
+              : "rgba(248,113,113,.98)";
+  el.stageOverlay.style.color=color;
+
+  el.runner.classList.remove("jump","fall");
+  el.lane?.classList.remove("shake");
+  if(grade==="perfect") el.runner.classList.add("jump");
+  if(grade==="barely") el.lane?.classList.add("shake");
+  if(grade==="fail") el.runner.classList.add("fall");
+
+  state.overlayUntil=now()+1050;
 }
-function spawnConfetti(){
+function spawnConfetti(intensity=1){
   el.confetti.innerHTML="";
   const colors=["#60a5fa","#34d399","#fbbf24","#a78bfa","#fb7185"];
-  for(let i=0;i<14;i++){
+  const count = intensity>=2 ? 24 : 14;
+  for(let i=0;i<count;i++){
     const d=document.createElement("div");
     d.className="confettiPiece";
     d.style.left=`${Math.floor(rand01()*96)+2}%`;
-    d.style.animationDelay=`${Math.floor(rand01()*180)}ms`;
+    d.style.animationDelay=`${Math.floor(rand01()*220)}ms`;
     d.style.background=colors[i%colors.length];
     el.confetti.appendChild(d);
   }
@@ -161,25 +201,39 @@ function renderStage(){
   }
   el.trackFill.style.width=`${Math.floor(pct*100)}%`;
   el.stagePct.textContent=`${Math.floor(pct*100)}%`;
+
   const leftPct=state.training?(pct*92):6;
   el.runner.style.left=`calc(${leftPct}% - 8px)`;
-  el.runner.classList.toggle("run",!!state.training);
-  el.runner.classList.toggle("good",state.formIdx>=2);
-  el.runner.classList.toggle("bad",state.formIdx<=0);
 
-  if(!state.training){el.stageMode.textContent="Idle"; el.stageNow.textContent="Pick a training below.";}
-  else if(state.training.kind==="training"){
+  // alive feel
+  el.runner.classList.add("run");
+  applyFormPose();
+
+  if(!state.training){
+    el.stageMode.textContent="Idle";
+    el.stageNow.textContent="Pick a training below.";
+    ensureFX(null);
+    el.runner.textContent="🏃";
+  }else if(state.training.kind==="training"){
     const t=TRACKS.find(x=>x.id===state.training.id);
     el.stageMode.textContent=`${t.icon} Training`;
     el.stageNow.textContent=`${t.name} Lv${state.training.level}`;
+    const fxMap={run:"speed",swim:"splash",bike:"gear",hike:"dust"};
+    ensureFX(fxMap[t.id]||"speed");
+    el.runner.textContent=runnerEmojiFor(t.id);
   }else{
     el.stageMode.textContent="🏁 Race";
     el.stageNow.textContent=RACES[state.training.id].name;
+    ensureFX("speed");
+    el.runner.textContent="🏃";
   }
 
   if(state.overlayUntil && now()>state.overlayUntil){
-    el.stageOverlay.classList.remove("show"); el.stageOverlay.classList.add("hidden");
-    el.confetti.innerHTML=""; state.overlayUntil=0;
+    el.stageOverlay.className="stageOverlay hidden";
+    el.confetti.innerHTML="";
+    state.overlayUntil=0;
+    el.runner.classList.remove("jump","fall");
+    el.lane?.classList.remove("shake");
   }
 }
 function renderHUD(){
@@ -204,38 +258,60 @@ function startTraining(trackId,lv){
 function resolveTraining(){
   if(!state.training || state.training.kind!=="training") return false;
   if(now()<state.training.endAt) return false;
+
   const trackId=state.training.id,lv=state.training.level;
   const p=trainingSuccessProb(trackId,lv);
   const roll=rand01();
-  let outcome="fail";
-  if(roll<p*.18) outcome="great";
-  else if(roll<p) outcome="success";
-  else if(roll<clamp(p+.10,0,.98)) outcome="struggle";
-  const t=TRACKS.find(x=>x.id===trackId);
-  const moneyGain=Math.floor(baseMoneyReward(lv)* (outcome==="great"?1.25:outcome==="success"?1.0:outcome==="struggle"?0.65:0.25));
-  state.money+=moneyGain;
-  const gainBase=.55+lv*.22;
-  const gainMul=outcome==="great"?1.25:outcome==="success"?1.0:outcome==="struggle"?0.70:0.35;
-  state[t.main]+=gainBase*1.00*gainMul;
-  state[t.alt]+=gainBase*0.55*gainMul;
 
-  if(outcome!=="fail"){
+  let grade="fail";
+  const perfectGate = clamp(p*0.20*(state.formIdx>=2?1.15:0.85),0.02,0.22);
+  const barelyGate  = clamp(p + 0.10,0.05,0.98);
+
+  if(roll < perfectGate) grade="perfect";
+  else if(roll < p) grade="success";
+  else if(roll < barelyGate) grade="barely";
+  else grade="fail";
+
+  const t=TRACKS.find(x=>x.id===trackId);
+
+  const moneyBase = baseMoneyReward(lv);
+  const moneyMul = grade==="perfect"?1.35 : grade==="success"?1.00 : grade==="barely"?0.65 : 0.20;
+  const moneyGain = Math.floor(moneyBase * moneyMul);
+  state.money += moneyGain;
+
+  const gainBase = 0.55 + lv*0.22;
+  const gainMul = grade==="perfect"?1.30 : grade==="success"?1.00 : grade==="barely"?0.75 : 0.35;
+  state[t.main] += gainBase*1.00*gainMul;
+  state[t.alt]  += gainBase*0.55*gainMul;
+
+  if(grade==="perfect" || grade==="success"){
     const cleared=state.unlocked[trackId]||1;
     if(lv===cleared+1) state.unlocked[trackId]=cleared+1;
   }
-  state.fitness=computeFitness();
 
-  if(outcome==="great"||outcome==="success"){setOverlay("SUCCESS", "good"); spawnConfetti();}
-  else if(outcome==="struggle"){setOverlay("BARELY","warn");}
-  else setOverlay("FAIL","bad");
+  state.fitness = computeFitness();
+
+  if(grade==="perfect"){
+    setOverlay("PERFECT!!","perfect"); spawnConfetti(2);
+    toast(`PERFECT! +$${moneyGain}`);
+  }else if(grade==="success"){
+    setOverlay("SUCCESS","success"); spawnConfetti(1);
+    toast(`Success +$${moneyGain}`);
+  }else if(grade==="barely"){
+    setOverlay("BARELY","barely");
+    toast(`Barely made it… +$${moneyGain}`);
+  }else{
+    setOverlay("FAIL","fail");
+    toast("Failed. Rest & try again.");
+  }
 
   state.training=null;
 
   if(state.autoRepeat){
     const nextLv=Math.min(lv,(state.unlocked[trackId]||1)+1);
     if(state.energy>=trainingCostEnergy(nextLv)) startTraining(trackId,nextLv);
-    else toast("Too tired. Rest or buy recovery gear.");
   }
+
   save(); renderAll(); return true;
 }
 
@@ -250,22 +326,37 @@ function startRace(raceId){
 function resolveRace(){
   if(!state.training || state.training.kind!=="race") return false;
   if(now()<state.training.endAt) return false;
-  const raceId=state.training.id; const r=RACES[raceId];
+
+  const raceId=state.training.id;
+  const r=RACES[raceId];
   const form=FORM[state.formIdx].mult;
+
   const enduranceBias=(r.focus==="endurance")?1.0:0.55;
   const score=(state.fitness*.90+state.vo2*.8+state.endurance*.9*enduranceBias+state.technique*.25)*form;
+
   const field=2500+r.km*80;
   const rank=clamp(Math.floor(field-score*6.2+rand01()*120),1,field);
   const placePct=1-(rank/field);
   const prize=Math.max(10,Math.floor(25+placePct*140+r.km*2));
-  state.money+=prize;
-  state.technique+=0.4+placePct*0.8;
-  state.fitness=computeFitness();
-  const text=(rank<=field*.06)?"PODIUM!":(rank<=field*.25)?"GREAT!":(rank<=field*.60)?"FINISH":"SURVIVED";
-  setOverlay(text, rank<=field*.25?"good":rank<=field*.60?"warn":"bad");
-  if(rank<=field*.25) spawnConfetti();
-  state.training=null;
+
+  state.money += prize;
+  state.technique += 0.4 + placePct*0.8;
+  state.fitness = computeFitness();
+
+  let grade="fail";
+  let text="SURVIVED";
+  if(rank<=field*0.03){grade="perfect"; text="PODIUM!!";}
+  else if(rank<=field*0.18){grade="success"; text="GREAT!";}
+  else if(rank<=field*0.60){grade="barely"; text="FINISH";}
+  else {grade="fail"; text="DNF";}
+
+  setOverlay(text, grade);
+  if(grade==="perfect") spawnConfetti(2);
+  else if(grade==="success") spawnConfetti(1);
+
   el.raceResult.textContent=`${r.name}: Rank #${rank} / ${field} • Prize +$${prize}`;
+  state.training=null;
+
   save(); renderAll(); return true;
 }
 
@@ -278,7 +369,7 @@ let toastTimer=null;
 function toast(msg){
   el.hint.textContent=msg;
   if(toastTimer) clearTimeout(toastTimer);
-  toastTimer=setTimeout(()=>{el.hint.textContent="Tip: Clear higher levels for faster growth and better races.";},2600);
+  toastTimer=setTimeout(()=>{el.hint.textContent="Tip: Aim for PERFECT!! — higher level clears grow faster.";},2600);
 }
 
 function renderAll(){

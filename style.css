@@ -248,3 +248,67 @@ p{margin:0}
 .detailsSum{cursor:pointer;font-weight:1000}
 .detailsSum::-webkit-details-marker{display:none}
 .debug{margin:10px 0 0 0;white-space:pre-wrap;font-size:12px;color:rgba(255,255,255,.75)}
+
+
+/* ===== Gamey FX (per discipline) ===== */
+.fxLayer{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.fx{position:absolute;inset:0;opacity:0;transition:opacity .12s ease}
+.fx.show{opacity:1}
+
+.fx.speed::before,.fx.speed::after{
+  content:"";position:absolute;top:26px;left:8px;right:52px;height:34px;border-radius:18px;
+  background: repeating-linear-gradient(90deg, rgba(255,255,255,.00), rgba(255,255,255,.00) 12px, rgba(255,255,255,.10) 13px, rgba(255,255,255,.10) 14px);
+  filter: blur(.2px);
+  animation:speed 420ms linear infinite;
+  opacity:.35;
+}
+.fx.speed::after{top:32px;opacity:.22;animation-duration:520ms}
+@keyframes speed{from{transform:translateX(0)}to{transform:translateX(-22px)}}
+
+.fx.splash::before{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:46px;
+  background: radial-gradient(60px 18px at 18% 60%, rgba(96,165,250,.25), transparent 65%),
+              radial-gradient(70px 22px at 42% 75%, rgba(96,165,250,.20), transparent 70%),
+              radial-gradient(80px 26px at 68% 70%, rgba(96,165,250,.22), transparent 72%),
+              radial-gradient(60px 18px at 86% 78%, rgba(96,165,250,.16), transparent 70%);
+  animation:wave 900ms ease-in-out infinite;
+  opacity:.55;
+}
+@keyframes wave{0%,100%{transform:translateY(2px)}50%{transform:translateY(-2px)}}
+
+.fx.dust::before{
+  content:"";position:absolute;left:0;right:0;bottom:-4px;height:30px;
+  background: radial-gradient(40px 16px at 20% 50%, rgba(251,191,36,.22), transparent 70%),
+              radial-gradient(46px 18px at 45% 55%, rgba(251,191,36,.18), transparent 72%),
+              radial-gradient(44px 18px at 70% 45%, rgba(251,191,36,.20), transparent 72%);
+  animation:dust 520ms ease-in-out infinite;
+  opacity:.55;
+}
+@keyframes dust{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+
+.fx.gear::before,.fx.gear::after{
+  content:"⚙️";position:absolute;top:18px;font-size:26px;opacity:.20;
+  animation:spin 800ms linear infinite;
+}
+.fx.gear::before{left:18%}
+.fx.gear::after{left:62%;top:34px;font-size:22px;animation-duration:650ms}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
+.runner.fire{filter: drop-shadow(0 16px 30px rgba(251,191,36,.22));}
+.runner.tired{opacity:.92;filter: drop-shadow(0 12px 24px rgba(248,113,113,.22));}
+.runner.neutral{opacity:.96}
+.runner.good{opacity:1}
+
+.runner.jump{animation:jump 520ms ease-out 1}
+@keyframes jump{0%{transform:translateY(0)}40%{transform:translateY(-10px)}100%{transform:translateY(0)}}
+
+.runner.fall{animation:fall 650ms ease-out 1}
+@keyframes fall{0%{transform:rotate(0deg)}35%{transform:rotate(-16deg) translateY(2px)}100%{transform:rotate(-10deg) translateY(4px)}}
+
+.lane.shake{animation:shake 420ms ease-in-out 1}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}50%{transform:translateX(3px)}75%{transform:translateX(-2px)}}
+
+.stageOverlay.perfect{letter-spacing:.14em}
+.stageOverlay.success{letter-spacing:.10em}
+.stageOverlay.barely{letter-spacing:.12em}
+.stageOverlay.fail{letter-spacing:.16em}

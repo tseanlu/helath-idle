@@ -17,3 +17,8 @@
 
 ## Advanced stats (system-facing)
 VO2, Endurance, Strength, Recovery, Technique.
+
+
+## v2.1
+- Gamey FX per discipline (speed/splash/gears/dust)
+- 4-grade outcomes with motion + overlay styles
